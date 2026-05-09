@@ -9,10 +9,23 @@ function __tmux_claude_session_args
                 return
         end
     end
-    set -l sess (tmux display-message -p '#{session_name}' 2>/dev/null)
-    set -l win (tmux display-message -p '#{window_index}' 2>/dev/null)
-    set -l pane (tmux display-message -p '#{pane_index}' 2>/dev/null)
-    if test -n "$sess" -a -n "$win" -a -n "$pane"
-        printf '%s\n' --name "$sess:$win.$pane"
+    set -l wname (tmux display-message -p -t "$TMUX_PANE" '#{window_name}' 2>/dev/null)
+    set -l pane_count (tmux display-message -p -t "$TMUX_PANE" '#{window_panes}' 2>/dev/null)
+    set -l pane (tmux display-message -p -t "$TMUX_PANE" '#{pane_index}' 2>/dev/null)
+
+    if test -z "$wname"; or string match -qr '^(fish|bash|zsh|sh|dash|tcsh|csh|ksh|nu|nushell|pwsh)$' -- "$wname"
+        set -l sess (tmux display-message -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null)
+        set -l win (tmux display-message -p -t "$TMUX_PANE" '#{window_index}' 2>/dev/null)
+        test -z "$sess" -o -z "$win"; and return
+        set wname "$sess:$win"
     end
+
+    test -z "$wname"; and return
+
+    set -l name $wname
+    if test -n "$pane_count" -a "$pane_count" -gt 1 -a -n "$pane" 2>/dev/null
+        set name "$wname.$pane"
+    end
+    set name (string replace -ra '[^A-Za-z0-9_.:-]' '-' -- $name)
+    printf '%s\n' --name "$name"
 end

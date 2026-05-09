@@ -19,6 +19,14 @@ RESURRECT_DIR="${RESURRECT_DIR/#\~/$HOME}"
 PANE_MAP="${RESURRECT_DIR}/claude-panes.txt"
 MAX_SAVES=${TMUX_CLAUDE_MAX_SAVES:-20}
 
+# Serialize concurrent saves (hooks fire in parallel after /clear in multiple panes)
+LOCK_DIR="${RESURRECT_DIR}/.claude-save.lock"
+_attempts=0
+while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+    _attempts=$((_attempts + 1))
+    [ $_attempts -ge 10 ] && exit 0
+    sleep 0.5
+done
 # --- Prune old saves ---
 if [ -d "$RESURRECT_DIR" ]; then
     (cd "$RESURRECT_DIR" && ls -t tmux_resurrect_*.txt 2>/dev/null | tail -n +$((MAX_SAVES + 1)) | xargs rm -f 2>/dev/null) || true
@@ -26,7 +34,7 @@ fi
 
 # --- Build mapping (atomic: write temp, mv on success) ---
 tmpfile=$(mktemp "${PANE_MAP}.XXXXXX")
-trap 'rm -f "$tmpfile"' EXIT
+trap 'rm -rf "$LOCK_DIR"; rm -f "$tmpfile"' EXIT
 
 echo "# Claude/Codex session mapping — $(date)" > "$tmpfile"
 echo "# Format: session:window.pane|tool|session_id|cwd|window_name" >> "$tmpfile"
@@ -93,9 +101,11 @@ done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null)
 
 if [ "$pane_count" -eq 0 ] && [ -f "$PANE_MAP" ]; then
     rm -f "$tmpfile"
+    rm -rf "$LOCK_DIR"
     trap - EXIT
     exit 0
 fi
 
 mv "$tmpfile" "$PANE_MAP"
+rm -rf "$LOCK_DIR"
 trap - EXIT

@@ -45,28 +45,50 @@ while IFS='|' read -r target tool sid cwd wname; do
 
     printf "%-12s %-8s %-6s %s\n" "$target" "($wname)" "$tool" "$sid"
 
+    # Build a stable --name from window name + pane index (if multi-pane)
+    pane_idx="${target##*.}"
+    pane_count=$(tmux list-panes -t "${target%.*}" -F x 2>/dev/null | wc -l | tr -d ' ') || pane_count=1
+
+    # If saved window name is a default shell name, use pane coordinates instead
+    use_wname="$wname"
+    case "$wname" in
+        fish|bash|zsh|sh|dash|tcsh|csh|ksh|nu|nushell|pwsh|"")
+            use_wname="${target%.*}" ;;
+    esac
+
+    if [ "${pane_count:-1}" -gt 1 ]; then
+        session_name="${use_wname}.${pane_idx}"
+    else
+        session_name="${use_wname}"
+    fi
+    # Sanitize: keep only safe chars, replace everything else with hyphens
+    session_name=$(printf '%s' "$session_name" | sed 's/[^A-Za-z0-9_.:-]/-/g')
+
+    safe_cwd=$(printf '%q' "$cwd")
+    safe_sid=$(printf '%q' "$sid")
+
     case "$tool" in
         claude)
             if [ "$sid" = "picker" ]; then
-                send "$target" "cd \"$cwd\" && ccy --resume"
+                send "$target" "cd $safe_cwd && ccy --name $session_name --resume"
                 picker_count=$((picker_count + 1))
             else
-                send "$target" "cd \"$cwd\" && ccy --resume $sid"
+                send "$target" "cd $safe_cwd && ccy --name $session_name --resume $safe_sid"
             fi
             ;;
         codex)
             if [ "$sid" = "picker" ]; then
-                send "$target" "cd \"$cwd\" && cxy resume"
+                send "$target" "cd $safe_cwd && cxy resume"
                 picker_count=$((picker_count + 1))
             else
-                send "$target" "cd \"$cwd\" && cxy resume $sid"
+                send "$target" "cd $safe_cwd && cxy resume $safe_sid"
             fi
             ;;
         nvim)
-            send "$target" "cd \"$cwd\" && nvim"
+            send "$target" "cd $safe_cwd && nvim"
             ;;
         just)
-            send "$target" "cd \"$cwd\" && just $sid"
+            send "$target" "cd $safe_cwd && just $safe_sid"
             ;;
     esac
 done < "$PANE_MAP"

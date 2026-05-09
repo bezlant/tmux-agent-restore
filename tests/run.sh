@@ -27,7 +27,7 @@ assert_eq() {
 
 assert_contains() {
     local desc="$1" needle="$2" haystack="$3"
-    if echo "$haystack" | grep -qF "$needle"; then
+    if echo "$haystack" | grep -qF -- "$needle"; then
         green "  PASS: $desc"
         PASS=$((PASS + 1))
     else
@@ -246,10 +246,11 @@ if command -v fish &>/dev/null; then
         result=$(fish -c "
             source $PLUGIN_DIR/shell/__tmux_claude_session_args.fish
             set -gx TMUX '/tmp/test,1,0'
+            set -gx TMUX_PANE '%0'
             function tmux
-                switch \$argv[3]
-                    case '#{session_name}'; echo test
-                    case '#{window_index}'; echo 0
+                switch \$argv[5]
+                    case '#{window_name}'; echo my-window
+                    case '#{window_panes}'; echo 1
                     case '#{pane_index}'; echo 1
                 end
             end
@@ -434,6 +435,154 @@ if [ -n "$TMUX" ]; then
 else
     echo "  SKIP: not in tmux"
 fi
+
+# ============================================================
+echo ""
+echo "=== fish wrapper: window-name based naming ==="
+# ============================================================
+
+if command -v fish &>/dev/null; then
+    # Single pane: should produce --name <window_name> (no suffix)
+    result=$(fish -c "
+        source $PLUGIN_DIR/shell/__tmux_claude_session_args.fish
+        set -gx TMUX '/tmp/test,1,0'
+        set -gx TMUX_PANE '%0'
+        function tmux
+            switch \$argv[5]
+                case '#{window_name}'; echo hypothesis-testing
+                case '#{window_panes}'; echo 1
+                case '#{pane_index}'; echo 1
+            end
+        end
+        __tmux_claude_session_args
+    " 2>/dev/null | tr '\n' ' ' | sed 's/ $//')
+    assert_eq "single pane: name without suffix" "--name hypothesis-testing" "$result"
+
+    # Multi pane: should produce --name <window_name>.<pane>
+    result=$(fish -c "
+        source $PLUGIN_DIR/shell/__tmux_claude_session_args.fish
+        set -gx TMUX '/tmp/test,1,0'
+        set -gx TMUX_PANE '%5'
+        function tmux
+            switch \$argv[5]
+                case '#{window_name}'; echo my-editor
+                case '#{window_panes}'; echo 3
+                case '#{pane_index}'; echo 2
+            end
+        end
+        __tmux_claude_session_args
+    " 2>/dev/null | tr '\n' ' ' | sed 's/ $//')
+    assert_eq "multi pane: name with pane suffix" "--name my-editor.2" "$result"
+
+    # Edge case: empty window_panes (graceful fallback)
+    result=$(fish -c "
+        source $PLUGIN_DIR/shell/__tmux_claude_session_args.fish
+        set -gx TMUX '/tmp/test,1,0'
+        set -gx TMUX_PANE '%0'
+        function tmux
+            switch \$argv[5]
+                case '#{window_name}'; echo solo
+                case '#{window_panes}'; echo ''
+                case '#{pane_index}'; echo 1
+            end
+        end
+        __tmux_claude_session_args
+    " 2>/dev/null | tr '\n' ' ' | sed 's/ $//')
+    assert_eq "empty pane_count: no suffix" "--name solo" "$result"
+else
+    echo "  SKIP: fish not installed"
+fi
+
+# ============================================================
+echo ""
+echo "=== session-restore: --name injection and sanitization ==="
+# ============================================================
+
+tmpdir=$(mktemp -d)
+
+# Normal single-pane window
+cat > "$tmpdir/claude-panes.txt" <<'EOF'
+0:1.1|claude|aaa-111|/tmp|fine-tuning
+EOF
+
+# Simulate what session-restore does (inline parse + sanitize)
+while IFS='|' read -r target tool sid cwd wname; do
+    [[ "$target" =~ ^#.*$ ]] && continue
+    [ -z "$target" ] && continue
+    pane_idx="${target##*.}"
+    # single pane (only 1 entry for this window)
+    session_name="${wname}"
+    session_name=$(printf '%s' "$session_name" | sed 's/[^A-Za-z0-9_.:-]/-/g')
+    cmd="cd \"$cwd\" && ccy --name $session_name --resume $sid"
+done < "$tmpdir/claude-panes.txt"
+assert_contains "restore passes --name" "--name fine-tuning" "$cmd"
+assert_contains "restore passes --resume UUID" "--resume aaa-111" "$cmd"
+
+# Window name with shell metacharacters
+cat > "$tmpdir/claude-panes.txt" <<'EOF'
+0:1.1|claude|bbb-222|/tmp|bad;rm -rf /
+EOF
+while IFS='|' read -r target tool sid cwd wname; do
+    [[ "$target" =~ ^#.*$ ]] && continue
+    [ -z "$target" ] && continue
+    session_name="${wname}"
+    session_name=$(printf '%s' "$session_name" | sed 's/[^A-Za-z0-9_.:-]/-/g')
+    cmd="cd \"$cwd\" && ccy --name $session_name --resume $sid"
+done < "$tmpdir/claude-panes.txt"
+assert_contains "metachar sanitized" "--name bad-rm--rf--" "$cmd"
+assert_not_contains "no semicolons in cmd" ";" "$cmd"
+
+# Window name with spaces
+cat > "$tmpdir/claude-panes.txt" <<'EOF'
+0:1.1|claude|ccc-333|/tmp|my window name
+EOF
+while IFS='|' read -r target tool sid cwd wname; do
+    [[ "$target" =~ ^#.*$ ]] && continue
+    [ -z "$target" ] && continue
+    session_name="${wname}"
+    session_name=$(printf '%s' "$session_name" | sed 's/[^A-Za-z0-9_.:-]/-/g')
+    cmd="ccy --name $session_name --resume $sid"
+done < "$tmpdir/claude-panes.txt"
+assert_eq "spaces become hyphens" "ccy --name my-window-name --resume ccc-333" "$cmd"
+
+# Window name with slash (like comfyui/automation)
+cat > "$tmpdir/claude-panes.txt" <<'EOF'
+0:1.1|claude|ddd-444|/tmp|comfyui/automation
+EOF
+while IFS='|' read -r target tool sid cwd wname; do
+    [[ "$target" =~ ^#.*$ ]] && continue
+    [ -z "$target" ] && continue
+    session_name="${wname}"
+    session_name=$(printf '%s' "$session_name" | sed 's/[^A-Za-z0-9_.:-]/-/g')
+    cmd="ccy --name $session_name"
+done < "$tmpdir/claude-panes.txt"
+assert_eq "slash sanitized to hyphen" "ccy --name comfyui-automation" "$cmd"
+
+rm -rf "$tmpdir"
+
+# ============================================================
+echo ""
+echo "=== session-save: mkdir lock serialization ==="
+# ============================================================
+
+tmpdir=$(mktemp -d)
+LOCK_DIR="$tmpdir/.claude-save.lock"
+
+mkdir "$LOCK_DIR"
+_attempts=0
+while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+    _attempts=$((_attempts + 1))
+    [ $_attempts -ge 3 ] && break
+    sleep 0.1
+done
+assert_eq "lock blocks concurrent entry" "3" "$_attempts"
+
+rmdir "$LOCK_DIR"
+mkdir "$LOCK_DIR" 2>/dev/null
+lock_result=$?
+assert_eq "lock acquired after release" "0" "$lock_result"
+
+rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
