@@ -1353,6 +1353,80 @@ fi
 
 # ============================================================
 echo ""
+echo "=== lib/process: live_agent_pid ==="
+# ============================================================
+# shellcheck source=../lib/process.sh
+. "$PLUGIN_DIR/lib/process.sh"
+
+ORIG_PATH="$PATH"
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+mkdir -p "$tmpbin"
+PATH="$tmpbin:$PATH"
+
+cat > "$tmpbin/tmux" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = "display-message" ]; then
+    case "$*" in
+        *"#{pane_pid}"*) printf '%s\n' "100" ;;
+        *) exit 1 ;;
+    esac
+else
+    exit 1
+fi
+EOF
+chmod +x "$tmpbin/tmux"
+
+cat > "$tmpbin/ps" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = "-axww" ]; then
+    cat <<'PSOUT'
+ 100     1 fish
+ 110   100 /Users/me/bin/claude wrapper
+ 120   110 /opt/homebrew/bin/node /opt/claude cli --resume 0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf
+ 130   100 codex idle
+PSOUT
+elif [ "$1" = "-p" ]; then
+    case "$2" in
+        120) printf '%s\n' "/opt/homebrew/bin/node /opt/claude cli --resume 0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf" ;;
+        130) printf '%s\n' "codex idle" ;;
+        *) exit 1 ;;
+    esac
+else
+    exit 1
+fi
+EOF
+chmod +x "$tmpbin/ps"
+
+assert_eq "live_agent_pid finds deepest claude descendant by argv" \
+    "120" \
+    "$(live_agent_pid "%1" claude)"
+
+assert_eq "live_agent_pid finds direct codex descendant" \
+    "130" \
+    "$(live_agent_pid "%1" codex)"
+
+assert_eq "live_agent_pid misses absent tool" \
+    "" \
+    "$(live_agent_pid "%1" gemini || true)"
+
+assert_contains "process_command reads command for pid" \
+    "--resume 0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf" \
+    "$(process_command 120)"
+
+assert_eq "extract_uuid finds UUID" \
+    "0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf" \
+    "$(extract_uuid "abc 0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf def")"
+
+assert_eq "extract_uuid misses invalid text" \
+    "" \
+    "$(extract_uuid "not-a-uuid" || true)"
+
+PATH="$ORIG_PATH"
+rm -rf "$tmpdir"
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
