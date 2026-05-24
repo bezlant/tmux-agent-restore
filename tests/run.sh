@@ -721,6 +721,16 @@ assert_contains "auto-added field_encoded composed with caller flag" \
     "field_encoded" \
     "$row"
 
+row=$(snapshot_write_row "0:7.1" "codex" "abc" "uuid" \
+        "$(printf '/tmp/weird\tdir')" "" "wname" "field_encoded")
+field_encoded_count=$(printf '%s' "$row" | awk '{ print gsub(/field_encoded/, "") }')
+assert_eq "caller-provided field_encoded is deduplicated" \
+    "1" \
+    "$field_encoded_count"
+assert_eq "field_encoded remains the only flag when already supplied" \
+    "field_encoded" \
+    "$(printf '%s' "$row" | cut -f8)"
+
 row=$(snapshot_write_row "0:9.1" "codex" "abc" "uuid" "/plain/path" "" "win" "")
 assert_not_contains "no field_encoded for plain rows" \
     "field_encoded" \
@@ -825,6 +835,10 @@ assert_eq "nvim+empty → none kind" \
 assert_eq "just+dev → recipe kind, sid preserved" \
     "dev recipe" \
     "$(promote_v1_row just dev)"
+
+assert_eq "just+empty → none kind" \
+    "- none" \
+    "$(promote_v1_row just '')"
 
 assert_eq "just+spaced-recipe → recipe kind, sid preserved" \
     "dev server recipe" \
