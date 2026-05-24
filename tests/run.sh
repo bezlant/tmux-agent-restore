@@ -1709,6 +1709,9 @@ unset -f tmux live_agent_pid process_command
 echo ""
 echo "=== lib/adapters: loader order ==="
 # ============================================================
+unset -f claude_detect codex_detect nvim_detect just_detect
+unset -f claude_restore_argv codex_restore_argv nvim_restore_argv just_restore_argv
+
 # shellcheck source=../lib/adapters.sh
 . "$PLUGIN_DIR/lib/adapters.sh"
 
