@@ -1216,6 +1216,50 @@ rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
+echo "=== lib/snapshot: read v2 drops extra future columns ==="
+# ============================================================
+
+tmpdir=$(mktemp -d)
+{
+    printf '# tmux-claude snapshot v2\n'
+    printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\textra_future_col\n'
+    printf '0:1.1\tcodex\tabc\tuuid\t/cwd\t\twname\t\tfuture_value_dropped\n'
+} > "$tmpdir/v2plus.txt"
+
+row=$(snapshot_read "$tmpdir/v2plus.txt")
+
+# Reader truncates to exactly 8 fields.
+field_count=$(printf '%s' "$row" | awk -F'\t' '{print NF}')
+assert_eq "reader truncates to exactly 8 fields" \
+    "8" \
+    "$field_count"
+
+# The future column value must NOT appear anywhere in the emitted row.
+assert_not_contains "extra column value is dropped" \
+    "future_value_dropped" \
+    "$row"
+
+# Fields 1-8 are intact.
+assert_eq "target field intact" "0:1.1" "$(printf '%s' "$row" | cut -f1)"
+assert_eq "sid_kind field intact" "uuid" "$(printf '%s' "$row" | cut -f4)"
+assert_eq "wname field intact" "wname" "$(printf '%s' "$row" | cut -f7)"
+assert_eq "flags field intact (empty)" "" "$(printf '%s' "$row" | cut -f8)"
+
+# Row with MANY extra columns also gets truncated.
+{
+    printf '# tmux-claude snapshot v2\n'
+    printf '0:2.1\tclaude\txyz\tuuid\t/c\t\twin\tflag\tA\tB\tC\tD\n'
+} > "$tmpdir/v2-many-extras.txt"
+
+row=$(snapshot_read "$tmpdir/v2-many-extras.txt")
+field_count=$(printf '%s' "$row" | awk -F'\t' '{print NF}')
+assert_eq "12-field input truncates to 8" "8" "$field_count"
+assert_not_contains "trailing extras dropped" "A	B	C	D" "$row"
+
+rm -rf "$tmpdir"
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
