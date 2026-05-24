@@ -1478,6 +1478,86 @@ rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
+echo "=== lib/adapters: shared detect helper ==="
+# ============================================================
+# shellcheck source=../lib/adapter_helpers.sh
+. "$PLUGIN_DIR/lib/adapter_helpers.sh"
+
+tmpdir=$(mktemp -d)
+tmux() {
+    if [ "$1" = "show-options" ]; then
+        local option
+        option=""
+        while [ "$#" -gt 0 ]; do
+            if [ "$1" = "-v" ]; then
+                shift
+                option="${1:-}"
+                break
+            fi
+            shift
+        done
+        case "$option" in
+            @claude_session_id) printf '%s\n' sid >> "$tmpdir/options-seen"; printf '%s\n' "$MOCK_OPTION_SID" ;;
+            @claude_session_pid) printf '%s\n' pid >> "$tmpdir/options-seen"; printf '%s\n' "$MOCK_OPTION_PID" ;;
+            @claude_cwd) printf '%s\n' cwd >> "$tmpdir/options-seen"; printf '%s\n' "$MOCK_OPTION_CWD" ;;
+            *) return 1 ;;
+        esac
+    elif [ "$1" = "display-message" ]; then
+        case "$*" in
+            *"#{pane_current_path}"*) printf '%s\n' "/pane/cwd" ;;
+            *"#{pane_pid}"*) printf '%s\n' "100" ;;
+            *) return 1 ;;
+        esac
+    else
+        return 1
+    fi
+}
+
+live_agent_pid() { printf '%s\n' "$MOCK_LIVE_PID"; }
+process_command() { printf '%s\n' "$MOCK_COMMAND"; }
+extract_uuid() { printf '%s\n' "$MOCK_EXTRACT_UUID"; }
+
+: > "$tmpdir/options-seen"
+MOCK_LIVE_PID=222
+MOCK_OPTION_PID=222
+MOCK_OPTION_SID=0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf
+MOCK_OPTION_CWD=/option/cwd
+MOCK_COMMAND="ignored"
+MOCK_EXTRACT_UUID=""
+assert_eq "agent_detect_from_options uses matching pid option uuid" \
+    "$(printf 'claude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/option/cwd')" \
+    "$(adapter_detect_agent "%1" claude @claude_session_id @claude_session_pid @claude_cwd)"
+seen_options=$(cat "$tmpdir/options-seen")
+assert_contains "shared detector reads sid option by exact name" "sid" "$seen_options"
+assert_contains "shared detector reads pid option by exact name" "pid" "$seen_options"
+assert_contains "shared detector reads cwd option by exact name" "cwd" "$seen_options"
+
+MOCK_OPTION_PID=999
+MOCK_OPTION_SID=stale
+MOCK_EXTRACT_UUID=64d862e0-29de-44a2-a854-8aecfe22dac4
+assert_eq "agent_detect_from_options falls back to argv on stale pid" \
+    "$(printf 'claude\t64d862e0-29de-44a2-a854-8aecfe22dac4\tuuid\t/option/cwd')" \
+    "$(adapter_detect_agent "%1" claude @claude_session_id @claude_session_pid @claude_cwd)"
+
+MOCK_OPTION_PID=
+MOCK_OPTION_SID=0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf
+MOCK_EXTRACT_UUID=
+assert_eq "agent_detect_from_options trusts sid when pid option absent and live agent exists" \
+    "$(printf 'claude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/option/cwd')" \
+    "$(adapter_detect_agent "%1" claude @claude_session_id @claude_session_pid @claude_cwd)"
+
+MOCK_OPTION_PID=
+MOCK_OPTION_SID=
+MOCK_EXTRACT_UUID=
+assert_eq "agent_detect_from_options returns picker when live agent has no UUID" \
+    "$(printf 'claude\tpicker\tpicker\t/option/cwd')" \
+    "$(adapter_detect_agent "%1" claude @claude_session_id @claude_session_pid @claude_cwd)"
+
+unset -f tmux live_agent_pid process_command extract_uuid
+rm -rf "$tmpdir"
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
