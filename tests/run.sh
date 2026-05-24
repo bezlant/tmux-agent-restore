@@ -1292,6 +1292,12 @@ else
     else
         row_count=$(printf '%s\n' "$rows" | grep -c $'^[^\t]' || true)
 
+        # LEGACY warning expected for v1 input (current live format).
+        if [ "$(snapshot_detect_version "$real_snapshot")" = "1" ]; then
+            assert_contains "LEGACY warning logged for v1 input" \
+                "LEGACY" "$err"
+        fi
+
         if [ "$row_count" -eq 0 ]; then
             echo "  (smoke: live snapshot has no rows, skipping field assertions)"
         else
@@ -1308,15 +1314,9 @@ else
             assert_eq "no row has empty target" \
                 "" \
                 "$no_target"
-
-            # LEGACY warning expected for v1 input (current live format).
-            if [ "$(snapshot_detect_version "$real_snapshot")" = "1" ]; then
-                assert_contains "LEGACY warning logged for v1 input" \
-                    "LEGACY" "$err"
-            fi
-
-            echo "  (smoke: parsed $row_count rows from live snapshot)"
         fi
+
+        echo "  (smoke: parsed $row_count rows from live snapshot)"
     fi
     rm -rf "$tmpdir"
 fi
