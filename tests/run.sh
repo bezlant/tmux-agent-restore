@@ -1406,17 +1406,23 @@ assert_eq "live_agent_pid finds direct codex descendant" \
     "130" \
     "$(live_agent_pid "%1" codex)"
 
+miss_output=$(live_agent_pid "%1" gemini)
+miss_status=$?
 assert_eq "live_agent_pid misses absent tool" \
     "" \
-    "$(live_agent_pid "%1" gemini || true)"
+    "$miss_output"
+
+assert_eq "live_agent_pid miss returns nonzero" \
+    "1" \
+    "$miss_status"
 
 assert_contains "process_command reads command for pid" \
     "--resume 0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf" \
     "$(process_command 120)"
 
-assert_eq "extract_uuid finds UUID" \
+assert_eq "extract_uuid finds UUID and normalizes uppercase hex" \
     "0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf" \
-    "$(extract_uuid "abc 0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf def")"
+    "$(extract_uuid "abc 0CBB1761-1A50-4CC4-8E7D-7B4BBDC788BF def")"
 
 assert_eq "extract_uuid misses invalid text" \
     "" \

@@ -19,7 +19,13 @@ live_agent_pid() {
                 match_pid = pid
             }
         }
-        END { if (match_pid != "") print match_pid }
+        END {
+            if (match_pid != "") {
+                print match_pid
+                exit 0
+            }
+            exit 1
+        }
     '
 }
 
