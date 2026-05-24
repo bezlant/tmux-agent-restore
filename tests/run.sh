@@ -1226,7 +1226,11 @@ tmpdir=$(mktemp -d)
     printf '0:1.1\tcodex\tabc\tuuid\t/cwd\t\twname\t\tfuture_value_dropped\n'
 } > "$tmpdir/v2plus.txt"
 
-row=$(snapshot_read "$tmpdir/v2plus.txt")
+row=$(snapshot_read "$tmpdir/v2plus.txt" 2>"$tmpdir/v2plus.err"); rc=$?; err=$(cat "$tmpdir/v2plus.err")
+
+assert_eq "extra future column is accepted" "0" "$rc"
+assert_not_contains "extra future column does not warn" "WARN" "$err"
+assert_not_contains "extra future column does not error" "ERROR" "$err"
 
 # Reader truncates to exactly 8 fields.
 field_count=$(printf '%s' "$row" | awk -F'\t' '{print NF}')
@@ -1251,7 +1255,12 @@ assert_eq "flags field intact (empty)" "" "$(printf '%s' "$row" | cut -f8)"
     printf '0:2.1\tclaude\txyz\tuuid\t/c\t\twin\tflag\tA\tB\tC\tD\n'
 } > "$tmpdir/v2-many-extras.txt"
 
-row=$(snapshot_read "$tmpdir/v2-many-extras.txt")
+row=$(snapshot_read "$tmpdir/v2-many-extras.txt" 2>"$tmpdir/v2-many-extras.err"); rc=$?; err=$(cat "$tmpdir/v2-many-extras.err")
+
+assert_eq "many extra future columns are accepted" "0" "$rc"
+assert_not_contains "many extra future columns do not warn" "WARN" "$err"
+assert_not_contains "many extra future columns do not error" "ERROR" "$err"
+
 field_count=$(printf '%s' "$row" | awk -F'\t' '{print NF}')
 assert_eq "12-field input truncates to 8" "8" "$field_count"
 assert_not_contains "trailing extras dropped" "A	B	C	D" "$row"
