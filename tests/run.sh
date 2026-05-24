@@ -1733,6 +1733,92 @@ done
 
 # ============================================================
 echo ""
+echo "=== adapters: contract smoke ==="
+# ============================================================
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+mkdir -p "$tmpbin"
+PATH="$tmpbin:$ORIG_PATH"
+
+cat > "$tmpbin/tmux" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = "display-message" ]; then
+    case "$*" in
+        *"#{pane_pid}"*) printf '%s\n' "100" ;;
+        *"#{pane_current_path}"*) printf '%s\n' "/contract/cwd" ;;
+        *) exit 1 ;;
+    esac
+elif [ "$1" = "show-options" ]; then
+    exit 1
+else
+    exit 1
+fi
+EOF
+chmod +x "$tmpbin/tmux"
+
+cat > "$tmpbin/ps" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = "-axww" ]; then
+    cat <<'PSOUT'
+ 100     1 fish
+ 200   100 claude --resume 0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf
+ 300   100 codex resume 019dd3be-9166-7750-8039-a1f9ecdad1f3
+ 400   100 nvim
+ 500   100 just dev
+PSOUT
+elif [ "$1" = "-p" ]; then
+    case "$2" in
+        200) printf '%s\n' "claude --resume 0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf" ;;
+        300) printf '%s\n' "codex resume 019dd3be-9166-7750-8039-a1f9ecdad1f3" ;;
+        400) printf '%s\n' "nvim" ;;
+        500) printf '%s\n' "just dev" ;;
+        *) exit 1 ;;
+    esac
+else
+    exit 1
+fi
+EOF
+chmod +x "$tmpbin/ps"
+
+adapters_load "$PLUGIN_DIR"
+
+for name in $(adapters_list); do
+    detect_fn="${name}_detect"
+    row=$("$detect_fn" "%1" || true)
+    field_count=$(printf '%s' "$row" | awk -F'\t' '{print NF}')
+    assert_eq "$name detect emits 4 TSV fields" "4" "$field_count"
+done
+
+assert_eq "claude detect sid_kind uuid from argv" \
+    "uuid" \
+    "$(claude_detect "%1" | cut -f3)"
+assert_eq "codex detect sid_kind uuid from argv" \
+    "uuid" \
+    "$(codex_detect "%1" | cut -f3)"
+assert_eq "nvim detect sid_kind none" \
+    "none" \
+    "$(nvim_detect "%1" | cut -f3)"
+assert_eq "just detect sid_kind recipe" \
+    "recipe" \
+    "$(just_detect "%1" | cut -f3)"
+
+for name in claude codex nvim just; do
+    restore_fn="${name}_restore_argv"
+    case "$name" in
+        claude|codex) argv=$("$restore_fn" picker picker /contract/cwd name) ;;
+        nvim) argv=$("$restore_fn" - none /contract/cwd name) ;;
+        just) argv=$("$restore_fn" dev recipe /contract/cwd name) ;;
+    esac
+    assert_not_contains "$name restore_argv emits no shell control &&" "&&" "$argv"
+    assert_not_contains "$name restore_argv emits no shell control ;" ";" "$argv"
+done
+
+PATH="$ORIG_PATH"
+rm -rf "$tmpdir"
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
