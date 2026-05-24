@@ -1269,6 +1269,60 @@ rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
+echo "=== lib/snapshot: smoke test against live claude-panes.txt ==="
+# ============================================================
+
+real_snapshot="$HOME/.config/tmux/resurrect/claude-panes.txt"
+
+if [ ! -f "$real_snapshot" ]; then
+    echo "  (smoke: no live snapshot at $real_snapshot, skipping)"
+elif [ ! -s "$real_snapshot" ]; then
+    echo "  (smoke: live snapshot is zero-byte, skipping)"
+else
+    tmpdir=$(mktemp -d)
+    rows=$(snapshot_read "$real_snapshot" 2>"$tmpdir/smoke.err"); rc=$?
+    err=$(cat "$tmpdir/smoke.err")
+
+    if [ "$rc" -ne 0 ]; then
+        # Reader refused to parse — that itself is an actionable finding.
+        # Don't silently skip; fail the test with the reason.
+        red "  FAIL: snapshot_read returned $rc for live snapshot"
+        red "    stderr: $err"
+        FAIL=$((FAIL + 1))
+    else
+        row_count=$(printf '%s\n' "$rows" | grep -c $'^[^\t]' || true)
+
+        if [ "$row_count" -eq 0 ]; then
+            echo "  (smoke: live snapshot has no rows, skipping field assertions)"
+        else
+            # Every emitted row must have exactly 8 tab-separated fields.
+            bad=$(printf '%s\n' "$rows" \
+                  | awk -F'\t' 'NF != 8 { print NR; exit }')
+            assert_eq "every emitted row has exactly 8 fields" \
+                "" \
+                "$bad"
+
+            # No row should have an empty target (column 1).
+            no_target=$(printf '%s\n' "$rows" \
+                        | awk -F'\t' '$1 == "" { print NR; exit }')
+            assert_eq "no row has empty target" \
+                "" \
+                "$no_target"
+
+            # LEGACY warning expected for v1 input (current live format).
+            if [ "$(snapshot_detect_version "$real_snapshot")" = "1" ]; then
+                assert_contains "LEGACY warning logged for v1 input" \
+                    "LEGACY" "$err"
+            fi
+
+            echo "  (smoke: parsed $row_count rows from live snapshot)"
+        fi
+    fi
+    rm -rf "$tmpdir"
+fi
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
