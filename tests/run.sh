@@ -848,6 +848,166 @@ assert_eq "claude+mixed-case UUID → normalized lowercase" \
 
 # ============================================================
 echo ""
+echo "=== lib/snapshot: read v2 happy path ==="
+# ============================================================
+
+rows=$(snapshot_read "$PLUGIN_DIR/tests/fixtures/v2-snapshot.txt")
+
+assert_eq "5 rows read" \
+    "5" \
+    "$(printf '%s\n' "$rows" | wc -l | tr -d ' ')"
+
+# Each row should be TAB-separated and start with the target.
+first=$(printf '%s\n' "$rows" | head -1)
+assert_eq "first row target" \
+    "0:1.1" \
+    "$(printf '%s' "$first" | cut -f1)"
+
+assert_eq "first row tool" \
+    "codex" \
+    "$(printf '%s' "$first" | cut -f2)"
+
+assert_eq "first row sid_kind" \
+    "uuid" \
+    "$(printf '%s' "$first" | cut -f4)"
+
+# nvim row (line 2 of output) has sid_kind=none
+nvim_row=$(printf '%s\n' "$rows" | sed -n '2p')
+assert_eq "nvim row sid_kind" \
+    "none" \
+    "$(printf '%s' "$nvim_row" | cut -f4)"
+
+# cwd_collapsed row preserves original_cwd in column 6
+collapsed=$(printf '%s\n' "$rows" | sed -n '3p')
+assert_eq "collapsed row original_cwd" \
+    "/Users/me/proj/.worktrees/pruned" \
+    "$(printf '%s' "$collapsed" | cut -f6)"
+
+assert_eq "collapsed row flags" \
+    "cwd_collapsed" \
+    "$(printf '%s' "$collapsed" | cut -f8)"
+
+# Comment lines are NOT in the output.
+assert_not_contains "output excludes header comment" \
+    "# tmux-claude snapshot" \
+    "$rows"
+
+assert_not_contains "output excludes field-name comment" \
+    "# fields:" \
+    "$rows"
+
+# Each row has exactly 8 fields (count TABs + 1 per line).
+while IFS= read -r row_line; do
+    nf=$(printf '%s' "$row_line" | awk -F'\t' '{print NF}')
+    assert_eq "row has exactly 8 fields" "8" "$nf"
+done <<<"$rows"
+
+# CRITICAL: a row whose last field (flags) is empty must NOT be
+# misidentified as a 7-field malformed row. The fixture row 1 has
+# empty flags (trailing TAB followed by LF). Verify it survived.
+first_flags=$(printf '%s\n' "$rows" | head -1 | awk -F'\t' '{print $8}')
+assert_eq "row 1 flags is empty (not skipped as malformed)" \
+    "" \
+    "$first_flags"
+
+# Row 5 (the 'just dev' sb row) also has empty original_cwd and empty
+# flags — both trailing/embedded empties survive.
+sb_row=$(printf '%s\n' "$rows" | sed -n '5p')
+sb_field_count=$(printf '%s' "$sb_row" | awk -F'\t' '{print NF}')
+assert_eq "sb row has 8 fields (trailing empties preserved)" \
+    "8" \
+    "$sb_field_count"
+assert_eq "sb row original_cwd is empty" \
+    "" \
+    "$(printf '%s' "$sb_row" | cut -f6)"
+assert_eq "sb row flags is empty" \
+    "" \
+    "$(printf '%s' "$sb_row" | cut -f8)"
+
+# ============================================================
+echo ""
+echo "=== lib/snapshot: split_row preserves empty fields ==="
+# ============================================================
+# CRITICAL contract: this is the consumer-side helper that consumers
+# (chunk 3 restore loop) MUST use instead of `IFS=$'\t' read`, because
+# bash's tab-as-IFS-whitespace collapses consecutive tabs.
+
+# Empirically verify the bash bug we're working around:
+bash_native=$(printf 'a\tb\t\tc' | (IFS=$'\t' read -r f1 f2 f3 f4; printf '%s|%s|%s|%s' "$f1" "$f2" "$f3" "$f4"))
+assert_eq "bash IFS=\$'\\t' read DOES collapse empty fields (proves the bug)" \
+    "a|b|c|" \
+    "$bash_native"
+
+# Now verify our helper preserves empties:
+split_output=$(snapshot_split_row "$(printf 'a\tb\t\tc')")
+assert_eq "split_row preserves empty field 3" \
+    "$(printf 'a\nb\n\nc')" \
+    "$split_output"
+
+# 8-field row with empty original_cwd and empty flags (mimics nvim row).
+# CRITICAL: must NOT use `fields=$(snapshot_split_row "$row")` here —
+# command substitution strips trailing newlines, dropping the 8th
+# empty field. Collect into an indexed array via process substitution.
+row=$(printf '0:6.1\tnvim\t-\tnone\t/cwd\t\tanalytics\t')
+fields=()
+while IFS= read -r field; do
+    fields+=("$field")
+done < <(snapshot_split_row "$row")
+
+assert_eq "8-field row with empties splits to 8 entries" \
+    "8" \
+    "${#fields[@]}"
+
+# The 6th field (original_cwd) is empty.
+assert_eq "original_cwd field is empty (not collapsed)" \
+    "" \
+    "${fields[5]}"
+
+# The 7th field (wname) is "analytics" — proves no shifting happened.
+assert_eq "wname field still 'analytics' (no shift)" \
+    "analytics" \
+    "${fields[6]}"
+
+# The 8th field (flags) is empty — proves trailing empty preserved.
+assert_eq "flags field is empty (trailing empty preserved)" \
+    "" \
+    "${fields[7]}"
+
+# Also assert: doing it WRONG (command sub) is actually broken, so
+# the warning comment in snapshot_split_row stays warranted.
+wrong=$(snapshot_split_row "$row")
+wrong_count=$(printf '%s\n' "$wrong" | grep -c '^' || true)
+assert_eq "command-sub of split_row DOES drop trailing empty (proves the trap)" \
+    "7" \
+    "$wrong_count"
+
+# Recipe for consumers: how to use split_row to get individual fields.
+# This pattern is what chunk 3's restore loop will use.
+read_row_into_vars() {
+    local row="$1"
+    local i=0
+    while IFS= read -r field; do
+        i=$((i + 1))
+        case "$i" in
+            1) target="$field" ;;
+            2) tool="$field" ;;
+            3) sid="$field" ;;
+            4) sid_kind="$field" ;;
+            5) cwd="$field" ;;
+            6) original_cwd="$field" ;;
+            7) wname="$field" ;;
+            8) flags="$field" ;;
+        esac
+    done < <(snapshot_split_row "$row")
+}
+target=; tool=; sid=; sid_kind=; cwd=; original_cwd=; wname=; flags=
+read_row_into_vars "$row"
+assert_eq "consumer pattern: original_cwd correctly empty" "" "$original_cwd"
+assert_eq "consumer pattern: wname correctly 'analytics'" "analytics" "$wname"
+assert_eq "consumer pattern: flags correctly empty" "" "$flags"
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"

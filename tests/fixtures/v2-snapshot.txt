@@ -1,0 +1,7 @@
+# tmux-claude snapshot v2
+# fields: target	tool	sid	sid_kind	cwd	original_cwd	wname	flags
+0:1.1	codex	019dd3be-9166-7750-8039-a1f9ecdad1f3	uuid	/Users/me/proj		fine-tuning	
+0:6.1	nvim	-	none	/Users/me/proj		analytics	
+0:7.1	codex	019e4e14-e530-7a12-96f8-c9aaa6a8bbd7	uuid	/Users/me/proj	/Users/me/proj/.worktrees/pruned	story-release	cwd_collapsed
+0:15.1	claude	-	none	/Users/me/proj		tt-automation	sid_invalid
+0:18.1	just	dev	recipe	/Users/me/proj/backend		sb	
