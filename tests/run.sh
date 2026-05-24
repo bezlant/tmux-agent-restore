@@ -1127,6 +1127,85 @@ rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
+echo "=== lib/snapshot: read error paths ==="
+# ============================================================
+
+tmpdir=$(mktemp -d)
+
+# --- Unknown future version (v9) ---
+printf '# tmux-claude snapshot v9\nignored\n' > "$tmpdir/v9.txt"
+
+out=$(snapshot_read "$tmpdir/v9.txt" 2>"$tmpdir/v9.err"); rc=$?
+err=$(cat "$tmpdir/v9.err")
+
+assert_eq "v9 returns non-zero exit code" "1" "$rc"
+assert_eq "v9 emits NO rows" "" "$out"
+assert_contains "v9 logs ERROR to stderr" "ERROR" "$err"
+assert_contains "v9 stderr mentions version" "9" "$err"
+
+# --- Non-empty unrecognized file (version -1) ---
+printf 'just garbage text with no header and no pipes\n' > "$tmpdir/garbage.txt"
+out=$(snapshot_read "$tmpdir/garbage.txt" 2>"$tmpdir/garbage.err"); rc=$?
+err=$(cat "$tmpdir/garbage.err")
+
+assert_eq "unrecognized non-empty returns non-zero" "1" "$rc"
+assert_eq "unrecognized emits NO rows" "" "$out"
+assert_contains "unrecognized logs ERROR" "ERROR" "$err"
+assert_contains "unrecognized stderr says 'refusing to parse'" \
+    "refusing to parse" "$err"
+
+# --- Malformed v2 row (7 fields, not 8) ---
+{
+    printf '# tmux-claude snapshot v2\n'
+    printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
+    printf '0:1.1\tcodex\tabc\tuuid\t/cwd\t\tfine-tuning\n'        # 7 fields — short!
+    printf '0:2.1\tclaude\tdef\tuuid\t/cwd\t\twin\t\n'            # 8 fields — ok
+} > "$tmpdir/malformed-v2.txt"
+
+out=$(snapshot_read "$tmpdir/malformed-v2.txt" 2>"$tmpdir/mv2.err")
+err=$(cat "$tmpdir/mv2.err")
+row_count=$(printf '%s\n' "$out" | grep -c '^' || true)
+
+assert_eq "malformed v2: 1 good row survives, 1 short row skipped" \
+    "1" "$row_count"
+assert_contains "malformed v2 logs WARN" "WARN" "$err"
+assert_contains "malformed v2 stderr says 'malformed v2 row'" \
+    "malformed v2 row" "$err"
+
+# --- Malformed v1 row (3 pipes, not 4) ---
+{
+    printf '0:1.1|codex|abc|/cwd|fine-tuning\n'                    # 5 fields ok
+    printf '0:2.1|claude|missing-fields\n'                         # 3 fields — short!
+} > "$tmpdir/malformed-v1.txt"
+
+out=$(snapshot_read "$tmpdir/malformed-v1.txt" 2>"$tmpdir/mv1.err")
+err=$(cat "$tmpdir/mv1.err")
+row_count=$(printf '%s\n' "$out" | grep -c '^' || true)
+
+assert_eq "malformed v1: 1 good row promoted, 1 short row skipped" \
+    "1" "$row_count"
+assert_contains "malformed v1 logs WARN" "WARN" "$err"
+assert_contains "malformed v1 stderr says 'malformed v1 row'" \
+    "malformed v1 row" "$err"
+
+# --- Malformed v1 row (6 pipes — extra | in cwd) ---
+{
+    printf '0:3.1|codex|def|/cwd/with|pipe|win\n'                  # 6 fields — extra!
+    printf '0:4.1|claude|ghi|/clean|win\n'                         # 5 fields ok
+} > "$tmpdir/malformed-v1-extra.txt"
+
+out=$(snapshot_read "$tmpdir/malformed-v1-extra.txt" 2>"$tmpdir/mv1e.err")
+err=$(cat "$tmpdir/mv1e.err")
+row_count=$(printf '%s\n' "$out" | grep -c '^' || true)
+
+assert_eq "v1 with extra pipe: extra-field row skipped, clean row promoted" \
+    "1" "$row_count"
+assert_contains "extra-pipe row logs WARN" "WARN" "$err"
+
+rm -rf "$tmpdir"
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
