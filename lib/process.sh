@@ -65,7 +65,7 @@ live_agent_pid() {
 
 process_command() {
     local pid="$1"
-    ps -p "$pid" -o command= 2>/dev/null | head -1
+    ps -p "$pid" -o command= 2>/dev/null | head -1 || true
 }
 
 extract_uuid() {

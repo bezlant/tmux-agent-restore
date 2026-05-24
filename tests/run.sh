@@ -1445,6 +1445,16 @@ assert_contains "process_command reads command for pid" \
     "--resume 0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf" \
     "$(process_command 120)"
 
+missing_command=$(process_command 999)
+missing_command_status=$?
+assert_eq "process_command missing pid prints empty" \
+    "" \
+    "$missing_command"
+
+assert_eq "process_command missing pid returns zero" \
+    "0" \
+    "$missing_command_status"
+
 assert_eq "extract_uuid finds UUID and normalizes uppercase hex" \
     "0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf" \
     "$(extract_uuid "abc 0CBB1761-1A50-4CC4-8E7D-7B4BBDC788BF def")"
