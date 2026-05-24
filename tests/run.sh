@@ -1379,14 +1379,14 @@ chmod +x "$tmpbin/tmux"
 
 cat > "$tmpbin/ps" <<'EOF'
 #!/usr/bin/env bash
-if [ "$1" = "-axww" ]; then
+if [ "$1" = "-axww" ] && [ "$2" = "-o" ] && [ "$3" = "pid=,ppid=,command=" ]; then
     cat <<'PSOUT'
  100     1 fish
  110   100 /Users/me/bin/claude wrapper
  120   110 /opt/homebrew/bin/node /opt/claude cli --resume 0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf
  130   100 codex idle
 PSOUT
-elif [ "$1" = "-p" ]; then
+elif [ "$1" = "-p" ] && [ "$3" = "-o" ] && [ "$4" = "command=" ]; then
     case "$2" in
         120) printf '%s\n' "/opt/homebrew/bin/node /opt/claude cli --resume 0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf" ;;
         130) printf '%s\n' "codex idle" ;;
@@ -1416,6 +1416,31 @@ assert_eq "live_agent_pid miss returns nonzero" \
     "1" \
     "$miss_status"
 
+cat > "$tmpbin/ps" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = "-axww" ] && [ "$2" = "-o" ] && [ "$3" = "pid=,ppid=,command=" ]; then
+    cat <<'PSOUT'
+ 120   110 /opt/homebrew/bin/node /opt/claude cli --resume 0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf
+ 100     1 fish
+ 130   100 codex idle
+ 110   100 /Users/me/bin/claude wrapper
+PSOUT
+elif [ "$1" = "-p" ] && [ "$3" = "-o" ] && [ "$4" = "command=" ]; then
+    case "$2" in
+        120) printf '%s\n' "/opt/homebrew/bin/node /opt/claude cli --resume 0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf" ;;
+        130) printf '%s\n' "codex idle" ;;
+        *) exit 1 ;;
+    esac
+else
+    exit 1
+fi
+EOF
+chmod +x "$tmpbin/ps"
+
+assert_eq "live_agent_pid finds grandchild before parent in ps output" \
+    "120" \
+    "$(live_agent_pid "%1" claude)"
+
 assert_contains "process_command reads command for pid" \
     "--resume 0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf" \
     "$(process_command 120)"
@@ -1427,6 +1452,16 @@ assert_eq "extract_uuid finds UUID and normalizes uppercase hex" \
 assert_eq "extract_uuid misses invalid text" \
     "" \
     "$(extract_uuid "not-a-uuid" || true)"
+
+uuid_miss_output=$(extract_uuid "not-a-uuid")
+uuid_miss_status=$?
+assert_eq "extract_uuid no match prints empty" \
+    "" \
+    "$uuid_miss_output"
+
+assert_eq "extract_uuid no match returns zero" \
+    "0" \
+    "$uuid_miss_status"
 
 PATH="$ORIG_PATH"
 rm -rf "$tmpdir"
