@@ -1806,7 +1806,8 @@ assert_eq "just detect sid_kind recipe" \
 for name in claude codex nvim just; do
     restore_fn="${name}_restore_argv"
     case "$name" in
-        claude|codex) argv=$("$restore_fn" picker picker /contract/cwd name) ;;
+        claude) argv=$("$restore_fn" 0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf uuid /contract/cwd name) ;;
+        codex) argv=$("$restore_fn" 019dd3be-9166-7750-8039-a1f9ecdad1f3 uuid /contract/cwd name) ;;
         nvim) argv=$("$restore_fn" - none /contract/cwd name) ;;
         just) argv=$("$restore_fn" dev recipe /contract/cwd name) ;;
     esac
