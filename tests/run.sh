@@ -1599,6 +1599,47 @@ rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
+echo "=== adapters: codex ==="
+# ============================================================
+# shellcheck source=../adapters/20-codex.sh
+. "$PLUGIN_DIR/adapters/20-codex.sh"
+
+tmpdir=$(mktemp -d)
+adapter_detect_agent() {
+    printf '%s\n' "$*" > "$tmpdir/codex-detect-args"
+    printf 'codex\t%s\t%s\t%s\n' "$MOCK_SID" "$MOCK_KIND" "$MOCK_CWD"
+}
+
+MOCK_SID=019dd3be-9166-7750-8039-a1f9ecdad1f3
+MOCK_KIND=uuid
+MOCK_CWD=/repo
+assert_eq "codex_detect delegates to shared detector" \
+    "$(printf 'codex\t019dd3be-9166-7750-8039-a1f9ecdad1f3\tuuid\t/repo')" \
+    "$(codex_detect "%1")"
+codex_detect "%1" >/dev/null
+codex_detect_args=$(cat "$tmpdir/codex-detect-args")
+assert_contains "codex_detect passes codex sid option" "@codex_session_id" "$codex_detect_args"
+assert_contains "codex_detect passes codex pid option" "@codex_session_pid" "$codex_detect_args"
+assert_contains "codex_detect passes codex cwd option" "@codex_cwd" "$codex_detect_args"
+assert_not_contains "codex_detect does not pass claude sid option" "@claude_session_id" "$codex_detect_args"
+
+assert_eq "codex_validate uuid is no-op in chunk 2" \
+    "0" \
+    "$(codex_validate "$MOCK_SID" uuid; echo $?)"
+
+assert_eq "codex_restore_argv uuid includes resume uuid" \
+    "$(printf 'cxy\nresume\n019dd3be-9166-7750-8039-a1f9ecdad1f3')" \
+    "$(codex_restore_argv "$MOCK_SID" uuid /repo work)"
+
+assert_eq "codex_restore_argv picker omits uuid" \
+    "$(printf 'cxy\nresume')" \
+    "$(codex_restore_argv picker picker /repo work)"
+
+unset -f adapter_detect_agent
+rm -rf "$tmpdir"
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
