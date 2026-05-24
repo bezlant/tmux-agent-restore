@@ -203,6 +203,40 @@ snapshot_read() {
     esac
 }
 
+# Internal: read legacy v1 pipe rows and promote to v2 rows.
+_snapshot_read_v1() {
+    local file="$1" line lineno=0 count=0
+    while IFS= read -r line || [ -n "$line" ]; do
+        lineno=$((lineno + 1))
+        [[ "$line" == \#* ]] && continue
+        case "$line" in
+            *[![:space:]]*) ;;
+            *) continue ;;
+        esac
+
+        local nf
+        nf=$(printf '%s' "$line" | awk -F'|' '{print NF}')
+
+        if [ "$nf" -ne 5 ]; then
+            snapshot_log WARN "malformed v1 row at line $lineno of $file (got $nf fields, need 5); skipping"
+            continue
+        fi
+
+        local target tool sid cwd wname
+        IFS='|' read -r target tool sid cwd wname <<<"$line"
+
+        local promoted promoted_sid promoted_kind
+        promoted=$(promote_v1_row "$tool" "$sid")
+        promoted_sid="${promoted% *}"
+        promoted_kind="${promoted##* }"
+
+        snapshot_write_row "$target" "$tool" "$promoted_sid" "$promoted_kind" "$cwd" "" "$wname" ""
+        count=$((count + 1))
+    done < "$file"
+
+    snapshot_log WARN "LEGACY v1 snapshot read ($count rows from $file)"
+}
+
 # Internal: read v2 rows, skipping comment + blank lines.
 # Field counting and truncation are delegated to awk, which preserves
 # trailing empty fields with -F'\t' (bash command substitution does
@@ -215,7 +249,10 @@ _snapshot_read_v2() {
     while IFS= read -r line || [ -n "$line" ]; do
         lineno=$((lineno + 1))
         [[ "$line" == \#* ]] && continue
-        [ -z "$line" ] && continue
+        case "$line" in
+            *[![:space:]]*) ;;
+            *) continue ;;
+        esac
 
         # Count fields directly via awk. `-F'\t'` preserves trailing
         # empty fields in NF.

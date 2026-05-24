@@ -1008,6 +1008,125 @@ assert_eq "consumer pattern: flags correctly empty" "" "$flags"
 
 # ============================================================
 echo ""
+echo "=== lib/snapshot: read v1 legacy fallback ==="
+# ============================================================
+
+tmpdir=$(mktemp -d)
+stdout="$tmpdir/stdout.txt"
+stderr="$tmpdir/stderr.txt"
+snapshot_read "$PLUGIN_DIR/tests/fixtures/v1-snapshot.txt" >"$stdout" 2>"$stderr"
+read_status=$?
+rows=$(cat "$stdout")
+logs=$(cat "$stderr")
+
+assert_eq "snapshot_read v1 fixture exits 0" \
+    "0" \
+    "$read_status"
+
+assert_eq "v1 fixture promotes 5 rows" \
+    "5" \
+    "$(printf '%s\n' "$rows" | wc -l | tr -d ' ')"
+
+while IFS= read -r row_line; do
+    nf=$(printf '%s' "$row_line" | awk -F'\t' '{print NF}')
+    assert_eq "v1 promoted row has exactly 8 fields" "8" "$nf"
+done < "$stdout"
+
+codex_row=$(printf '%s\n' "$rows" | sed -n '1p')
+assert_eq "v1 codex UUID sid preserved" \
+    "019dd3be-9166-7750-8039-a1f9ecdad1f3" \
+    "$(printf '%s' "$codex_row" | cut -f3)"
+assert_eq "v1 codex UUID sid_kind uuid" \
+    "uuid" \
+    "$(printf '%s' "$codex_row" | cut -f4)"
+
+nvim_row=$(printf '%s\n' "$rows" | sed -n '2p')
+assert_eq "v1 nvim picker sid discarded" \
+    "-" \
+    "$(printf '%s' "$nvim_row" | cut -f3)"
+assert_eq "v1 nvim picker sid_kind none" \
+    "none" \
+    "$(printf '%s' "$nvim_row" | cut -f4)"
+
+claude_invalid_row=$(printf '%s\n' "$rows" | sed -n '3p')
+assert_eq "v1 claude non-uuid sid discarded" \
+    "-" \
+    "$(printf '%s' "$claude_invalid_row" | cut -f3)"
+assert_eq "v1 claude non-uuid sid_kind none" \
+    "none" \
+    "$(printf '%s' "$claude_invalid_row" | cut -f4)"
+
+just_row=$(printf '%s\n' "$rows" | sed -n '5p')
+assert_eq "v1 just recipe preserved" \
+    "dev" \
+    "$(printf '%s' "$just_row" | cut -f3)"
+assert_eq "v1 just recipe sid_kind recipe" \
+    "recipe" \
+    "$(printf '%s' "$just_row" | cut -f4)"
+
+while IFS= read -r row_line; do
+    assert_eq "v1 promoted row original_cwd empty" \
+        "" \
+        "$(printf '%s' "$row_line" | cut -f6)"
+    assert_eq "v1 promoted row flags empty" \
+        "" \
+        "$(printf '%s' "$row_line" | cut -f8)"
+done < "$stdout"
+
+assert_contains "v1 read logs LEGACY warning" \
+    "LEGACY v1 snapshot read" \
+    "$logs"
+assert_contains "v1 read log mentions row count" \
+    "5 rows" \
+    "$logs"
+
+rm -rf "$tmpdir"
+
+# ============================================================
+echo ""
+echo "=== lib/snapshot: read v1 spaced just recipe ==="
+# ============================================================
+
+tmpdir=$(mktemp -d)
+cat > "$tmpdir/v1-spaced-just.txt" <<'EOF'
+0:19.1|just|dev server|/cwd|win
+EOF
+
+spaced_row=$(snapshot_read "$tmpdir/v1-spaced-just.txt" 2>/dev/null)
+assert_eq "v1 spaced just recipe preserves full sid" \
+    "dev server" \
+    "$(printf '%s' "$spaced_row" | cut -f3)"
+assert_eq "v1 spaced just recipe kind" \
+    "recipe" \
+    "$(printf '%s' "$spaced_row" | cut -f4)"
+
+rm -rf "$tmpdir"
+
+# ============================================================
+echo ""
+echo "=== lib/snapshot: read v2 whitespace-only lines ==="
+# ============================================================
+
+tmpdir=$(mktemp -d)
+stdout="$tmpdir/stdout.txt"
+stderr="$tmpdir/stderr.txt"
+printf '# tmux-claude snapshot v2\n# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n  \n0:1.1\tcodex\tabc\tuuid\t/cwd\t\twin\t\n' > "$tmpdir/v2-whitespace.txt"
+
+snapshot_read "$tmpdir/v2-whitespace.txt" >"$stdout" 2>"$stderr"
+rows=$(cat "$stdout")
+logs=$(cat "$stderr")
+
+assert_eq "v2 whitespace-only line is skipped, one row emitted" \
+    "1" \
+    "$(printf '%s\n' "$rows" | wc -l | tr -d ' ')"
+assert_not_contains "v2 whitespace-only line does not warn" \
+    "WARN" \
+    "$logs"
+
+rm -rf "$tmpdir"
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
