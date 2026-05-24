@@ -1280,6 +1280,7 @@ elif [ ! -s "$real_snapshot" ]; then
     echo "  (smoke: live snapshot is zero-byte, skipping)"
 else
     tmpdir=$(mktemp -d)
+    snapshot_version=$(snapshot_detect_version "$real_snapshot")
     rows=$(snapshot_read "$real_snapshot" 2>"$tmpdir/smoke.err"); rc=$?
     err=$(cat "$tmpdir/smoke.err")
 
@@ -1290,10 +1291,23 @@ else
         red "    stderr: $err"
         FAIL=$((FAIL + 1))
     else
-        row_count=$(printf '%s\n' "$rows" | grep -c $'^[^\t]' || true)
+        if [ -z "$rows" ]; then
+            row_count=0
+        else
+            row_count=$(printf '%s\n' "$rows" | wc -l | tr -d ' ')
+        fi
+
+        unexpected_logs=$(printf '%s\n' "$err" \
+                          | grep -E 'WARN|ERROR' \
+                          | grep -vF 'LEGACY v1 snapshot read' || true)
+        if [ -n "$unexpected_logs" ]; then
+            red "  FAIL: snapshot_read logged unexpected WARN/ERROR for live snapshot"
+            red "    stderr: $err"
+            FAIL=$((FAIL + 1))
+        fi
 
         # LEGACY warning expected for v1 input (current live format).
-        if [ "$(snapshot_detect_version "$real_snapshot")" = "1" ]; then
+        if [ "$snapshot_version" = "1" ]; then
             assert_contains "LEGACY warning logged for v1 input" \
                 "LEGACY" "$err"
         fi
