@@ -621,6 +621,49 @@ assert_eq "encode does not double-encode existing %09" \
 
 # ============================================================
 echo ""
+echo "=== lib/tsv: tsv_decode ==="
+# ============================================================
+
+assert_eq "decode plain ascii unchanged" \
+    "hello world" \
+    "$(tsv_decode 'hello world')"
+
+assert_eq "decode %25 to percent (LAST)" \
+    "100%" \
+    "$(tsv_decode '100%25')"
+
+assert_eq "decode %09 to tab" \
+    "$(printf 'a\tb')" \
+    "$(tsv_decode 'a%09b')"
+
+assert_eq "decode %0A to newline" \
+    "$(printf 'a\nb')" \
+    "$(tsv_decode 'a%0Ab')"
+
+assert_eq "decode %0D to carriage return" \
+    "$(printf 'a\rb')" \
+    "$(tsv_decode 'a%0Db')"
+
+assert_eq "decode empty string" \
+    "" \
+    "$(tsv_decode '')"
+
+assert_eq "decode does not over-eat: %2509 stays literal % then 09" \
+    "%09" \
+    "$(tsv_decode '%2509')"
+
+# Round-trip property: every special-byte string survives encode→decode.
+i=0
+for s in '' 'plain' 'pct%' "tab$(printf '\t')end" "nl$(printf '\n')end" \
+         "cr$(printf '\r')end" '%%%' "$(printf 'all\t%%\n\rend')"; do
+    i=$((i + 1))
+    enc=$(tsv_encode "$s")
+    dec=$(tsv_decode "$enc")
+    assert_eq "round-trip case #$i" "$s" "$dec"
+done
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"

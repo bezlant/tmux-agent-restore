@@ -13,3 +13,12 @@ tsv_encode() {
     v="${v//$'\r'/%0D}"
     printf '%s' "$v"
 }
+
+tsv_decode() {
+    local v="$1"
+    v="${v//%09/	}"
+    v="${v//%0A/$'\n'}"
+    v="${v//%0D/$'\r'}"
+    v="${v//%25/%}"
+    printf '%s' "$v"
+}
