@@ -733,6 +733,54 @@ assert_eq "all-empty trailing fields render as bare tabs" \
 
 # ============================================================
 echo ""
+echo "=== lib/snapshot: detect_version ==="
+# ============================================================
+
+tmpdir=$(mktemp -d)
+
+: > "$tmpdir/empty.txt"
+assert_eq "empty file → version 0" \
+    "0" \
+    "$(snapshot_detect_version "$tmpdir/empty.txt")"
+
+printf '# tmux-claude snapshot v2\n# fields: target\n0:1.1\tcodex\n' > "$tmpdir/v2.txt"
+assert_eq "v2 header → version 2" \
+    "2" \
+    "$(snapshot_detect_version "$tmpdir/v2.txt")"
+
+printf '0:1.1|codex|abc|/cwd|fine-tuning\n' > "$tmpdir/v1.txt"
+assert_eq "pipe-delimited no-header → version 1" \
+    "1" \
+    "$(snapshot_detect_version "$tmpdir/v1.txt")"
+
+printf '# Claude/Codex session mapping — Sat\n# Format: a|b\n0:1.1|codex|abc|/cwd|x\n' > "$tmpdir/v1-commented.txt"
+assert_eq "pipe rows after comments → version 1" \
+    "1" \
+    "$(snapshot_detect_version "$tmpdir/v1-commented.txt")"
+
+printf '# tmux-claude snapshot v9\n' > "$tmpdir/v9.txt"
+assert_eq "v9 header → version 9 (caller decides what to do)" \
+    "9" \
+    "$(snapshot_detect_version "$tmpdir/v9.txt")"
+
+assert_eq "missing file → version 0" \
+    "0" \
+    "$(snapshot_detect_version "$tmpdir/does-not-exist.txt")"
+
+printf 'just some random text\n' > "$tmpdir/garbage.txt"
+assert_eq "non-empty unrecognized → version -1 (unknown)" \
+    "-1" \
+    "$(snapshot_detect_version "$tmpdir/garbage.txt")"
+
+printf '# only a comment\n\n# another\n' > "$tmpdir/comments-only.txt"
+assert_eq "comments-only file → version 0" \
+    "0" \
+    "$(snapshot_detect_version "$tmpdir/comments-only.txt")"
+
+rm -rf "$tmpdir"
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"

@@ -35,6 +35,31 @@ snapshot_write_header() {
     printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
 }
 
+snapshot_detect_version() {
+    local file="$1"
+
+    [ -f "$file" ] || { echo 0; return; }
+    [ -s "$file" ] || { echo 0; return; }
+
+    local line
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [[ "$line" == "# tmux-claude snapshot v"* ]]; then
+            echo "${line##*v}"
+            return
+        fi
+        [[ "$line" == \#* ]] && continue
+        [ -z "$line" ] && continue
+        if [[ "$line" == *"|"* ]] && [[ "$line" != *$'\t'* ]]; then
+            echo 1
+            return
+        fi
+        echo -1
+        return
+    done < "$file"
+
+    echo 0
+}
+
 snapshot_write_row() {
     local target="$1"
     local tool="$2"
