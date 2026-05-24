@@ -1707,6 +1707,29 @@ unset -f tmux live_agent_pid process_command
 
 # ============================================================
 echo ""
+echo "=== lib/adapters: loader order ==="
+# ============================================================
+# shellcheck source=../lib/adapters.sh
+. "$PLUGIN_DIR/lib/adapters.sh"
+
+adapters_load "$PLUGIN_DIR"
+adapter_names=$(adapters_list | tr '\n' ' ' | sed 's/ $//')
+assert_eq "adapters load in NN filename order" \
+    "claude codex nvim just" \
+    "$adapter_names"
+
+for fn in claude_detect codex_detect nvim_detect just_detect \
+          claude_restore_argv codex_restore_argv nvim_restore_argv just_restore_argv; do
+    if declare -F "$fn" >/dev/null 2>&1; then
+        result=defined
+    else
+        result=missing
+    fi
+    assert_eq "adapter function $fn is loaded" "defined" "$result"
+done
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
