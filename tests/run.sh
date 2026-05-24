@@ -685,6 +685,54 @@ assert_eq "SNAPSHOT_VERSION constant is set" \
 
 # ============================================================
 echo ""
+echo "=== lib/snapshot: write_row ==="
+# ============================================================
+
+row=$(snapshot_write_row "0:1.1" "codex" "019dd3be-9166-7750-8039-a1f9ecdad1f3" \
+        "uuid" "/Users/me/proj" "" "fine-tuning" "")
+
+assert_eq "row has 8 tab-separated fields" \
+    "0:1.1	codex	019dd3be-9166-7750-8039-a1f9ecdad1f3	uuid	/Users/me/proj		fine-tuning	" \
+    "$row"
+
+row=$(snapshot_write_row "0:7.1" "codex" "abc" "uuid" \
+        "$(printf '/tmp/weird\tdir')" "" "$(printf 'name\nbreak')" "")
+
+assert_contains "encodes embedded tab in cwd as %09" \
+    "/tmp/weird%09dir" \
+    "$row"
+
+assert_contains "encodes embedded newline in wname as %0A" \
+    "name%0Abreak" \
+    "$row"
+
+assert_contains "writer auto-adds field_encoded when any field is encoded" \
+    "field_encoded" \
+    "$row"
+
+row=$(snapshot_write_row "0:7.1" "codex" "abc" "uuid" \
+        "$(printf '/tmp/weird\tdir')" "" "wname" "cwd_collapsed")
+
+assert_contains "caller-provided flag preserved" \
+    "cwd_collapsed" \
+    "$row"
+
+assert_contains "auto-added field_encoded composed with caller flag" \
+    "field_encoded" \
+    "$row"
+
+row=$(snapshot_write_row "0:9.1" "codex" "abc" "uuid" "/plain/path" "" "win" "")
+assert_not_contains "no field_encoded for plain rows" \
+    "field_encoded" \
+    "$row"
+
+row=$(snapshot_write_row "0:3.1" "nvim" "-" "none" "/cwd" "" "win" "")
+assert_eq "all-empty trailing fields render as bare tabs" \
+    "0:3.1	nvim	-	none	/cwd		win	" \
+    "$row"
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
