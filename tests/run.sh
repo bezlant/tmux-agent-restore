@@ -1640,6 +1640,73 @@ rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
+echo "=== adapters: nvim and just ==="
+# ============================================================
+# shellcheck source=../adapters/30-nvim.sh
+. "$PLUGIN_DIR/adapters/30-nvim.sh"
+# shellcheck source=../adapters/40-just.sh
+. "$PLUGIN_DIR/adapters/40-just.sh"
+
+tmux() {
+    if [ "$1" = "display-message" ]; then
+        case "$*" in
+            *"#{pane_current_path}"*) printf '%s\n' "/pane/cwd" ;;
+            *) return 1 ;;
+        esac
+    fi
+}
+live_agent_pid() {
+    case "$2" in
+        nvim) printf '%s\n' 301 ;;
+        vim) printf '%s\n' "" ;;
+        just) printf '%s\n' 401 ;;
+        *) return 1 ;;
+    esac
+}
+process_command() {
+    case "$1" in
+        401) printf '%s\n' "just dev" ;;
+        *) return 1 ;;
+    esac
+}
+
+assert_eq "nvim_detect emits none kind and cwd" \
+    "$(printf 'nvim\t-\tnone\t/pane/cwd')" \
+    "$(nvim_detect "%1")"
+
+live_agent_pid() {
+    case "$2" in
+        nvim) printf '%s\n' "" ;;
+        vim) printf '%s\n' 302 ;;
+        just) printf '%s\n' 401 ;;
+        *) return 1 ;;
+    esac
+}
+assert_eq "nvim_detect falls back from nvim to vim" \
+    "$(printf 'nvim\t-\tnone\t/pane/cwd')" \
+    "$(nvim_detect "%1")"
+
+assert_eq "nvim_restore_argv emits nvim" \
+    "nvim" \
+    "$(nvim_restore_argv - none /pane/cwd editor)"
+
+assert_eq "just_detect emits recipe kind and cwd" \
+    "$(printf 'just\tdev\trecipe\t/pane/cwd')" \
+    "$(just_detect "%1")"
+
+assert_eq "just_restore_argv emits just recipe" \
+    "$(printf 'just\ndev')" \
+    "$(just_restore_argv dev recipe /pane/cwd server)"
+
+process_command() { printf '%s\n' "just"; }
+assert_eq "just_detect without recipe misses" \
+    "" \
+    "$(just_detect "%1" || true)"
+
+unset -f tmux live_agent_pid process_command
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
