@@ -1164,10 +1164,12 @@ assert_contains "unrecognized stderr says 'refusing to parse'" \
 
 out=$(snapshot_read "$tmpdir/malformed-v2.txt" 2>"$tmpdir/mv2.err")
 err=$(cat "$tmpdir/mv2.err")
-row_count=$(printf '%s\n' "$out" | grep -c '^' || true)
+row_count=$(printf '%s\n' "$out" | grep -c $'^[^\t]' || true)
 
 assert_eq "malformed v2: 1 good row survives, 1 short row skipped" \
     "1" "$row_count"
+assert_contains "malformed v2 survivor is target 0:2.1" \
+    $'0:2.1\tclaude' "$out"
 assert_contains "malformed v2 logs WARN" "WARN" "$err"
 assert_contains "malformed v2 stderr says 'malformed v2 row'" \
     "malformed v2 row" "$err"
@@ -1180,10 +1182,14 @@ assert_contains "malformed v2 stderr says 'malformed v2 row'" \
 
 out=$(snapshot_read "$tmpdir/malformed-v1.txt" 2>"$tmpdir/mv1.err")
 err=$(cat "$tmpdir/mv1.err")
-row_count=$(printf '%s\n' "$out" | grep -c '^' || true)
+row_count=$(printf '%s\n' "$out" | grep -c $'^[^\t]' || true)
 
 assert_eq "malformed v1: 1 good row promoted, 1 short row skipped" \
     "1" "$row_count"
+assert_contains "malformed v1 survivor is target 0:1.1" \
+    $'0:1.1\tcodex' "$out"
+assert_contains "malformed v1 survivor sid kind is none" \
+    $'\t-\tnone\t' "$out"
 assert_contains "malformed v1 logs WARN" "WARN" "$err"
 assert_contains "malformed v1 stderr says 'malformed v1 row'" \
     "malformed v1 row" "$err"
@@ -1196,10 +1202,14 @@ assert_contains "malformed v1 stderr says 'malformed v1 row'" \
 
 out=$(snapshot_read "$tmpdir/malformed-v1-extra.txt" 2>"$tmpdir/mv1e.err")
 err=$(cat "$tmpdir/mv1e.err")
-row_count=$(printf '%s\n' "$out" | grep -c '^' || true)
+row_count=$(printf '%s\n' "$out" | grep -c $'^[^\t]' || true)
 
 assert_eq "v1 with extra pipe: extra-field row skipped, clean row promoted" \
     "1" "$row_count"
+assert_contains "extra-pipe survivor is target 0:4.1" \
+    $'0:4.1\tclaude' "$out"
+assert_not_contains "extra-pipe malformed target is skipped" \
+    "0:3.1" "$out"
 assert_contains "extra-pipe row logs WARN" "WARN" "$err"
 
 rm -rf "$tmpdir"
