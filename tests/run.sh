@@ -1558,6 +1558,47 @@ rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
+echo "=== adapters: claude ==="
+# ============================================================
+# shellcheck source=../adapters/10-claude.sh
+. "$PLUGIN_DIR/adapters/10-claude.sh"
+
+tmpdir=$(mktemp -d)
+adapter_detect_agent() {
+    printf '%s\n' "$*" > "$tmpdir/claude-detect-args"
+    printf 'claude\t%s\t%s\t%s\n' "$MOCK_SID" "$MOCK_KIND" "$MOCK_CWD"
+}
+
+MOCK_SID=0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf
+MOCK_KIND=uuid
+MOCK_CWD=/repo
+assert_eq "claude_detect delegates to shared detector" \
+    "$(printf 'claude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo')" \
+    "$(claude_detect "%1")"
+claude_detect "%1" >/dev/null
+claude_detect_args=$(cat "$tmpdir/claude-detect-args")
+assert_contains "claude_detect passes claude sid option" "@claude_session_id" "$claude_detect_args"
+assert_contains "claude_detect passes claude pid option" "@claude_session_pid" "$claude_detect_args"
+assert_contains "claude_detect passes claude cwd option" "@claude_cwd" "$claude_detect_args"
+assert_not_contains "claude_detect does not pass codex sid option" "@codex_session_id" "$claude_detect_args"
+
+assert_eq "claude_validate uuid is no-op in chunk 2" \
+    "0" \
+    "$(claude_validate "$MOCK_SID" uuid; echo $?)"
+
+assert_eq "claude_restore_argv uuid includes name and resume uuid" \
+    "$(printf 'ccy\n--name\nwork\n--resume\n0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf')" \
+    "$(claude_restore_argv "$MOCK_SID" uuid /repo work)"
+
+assert_eq "claude_restore_argv picker omits uuid" \
+    "$(printf 'ccy\n--name\nwork\n--resume')" \
+    "$(claude_restore_argv picker picker /repo work)"
+
+unset -f adapter_detect_agent
+rm -rf "$tmpdir"
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
