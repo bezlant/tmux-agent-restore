@@ -1297,9 +1297,11 @@ else
             row_count=$(printf '%s\n' "$rows" | wc -l | tr -d ' ')
         fi
 
-        unexpected_logs=$(printf '%s\n' "$err" \
-                          | grep -E 'WARN|ERROR' \
-                          | grep -vF 'LEGACY v1 snapshot read' || true)
+        unexpected_logs=$(printf '%s\n' "$err" | grep -E 'WARN|ERROR' || true)
+        if [ "$snapshot_version" = "1" ]; then
+            unexpected_logs=$(printf '%s\n' "$unexpected_logs" \
+                              | grep -vF 'LEGACY v1 snapshot read' || true)
+        fi
         if [ -n "$unexpected_logs" ]; then
             red "  FAIL: snapshot_read logged unexpected WARN/ERROR for live snapshot"
             red "    stderr: $err"
