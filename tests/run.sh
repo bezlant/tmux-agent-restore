@@ -791,6 +791,59 @@ rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
+echo "=== lib/snapshot: promote_v1_row ==="
+# ============================================================
+
+assert_eq "claude+UUID → uuid kind" \
+    "0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf uuid" \
+    "$(promote_v1_row claude 0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf)"
+
+assert_eq "claude+picker → picker kind" \
+    "picker picker" \
+    "$(promote_v1_row claude picker)"
+
+assert_eq "claude+nonsense → none kind, sid=-" \
+    "- none" \
+    "$(promote_v1_row claude not-a-uuid)"
+
+assert_eq "codex+UUID → uuid kind" \
+    "019dd3be-9166-7750-8039-a1f9ecdad1f3 uuid" \
+    "$(promote_v1_row codex 019dd3be-9166-7750-8039-a1f9ecdad1f3)"
+
+assert_eq "codex+picker → picker kind" \
+    "picker picker" \
+    "$(promote_v1_row codex picker)"
+
+assert_eq "nvim+picker → none kind (sid discarded — historical sentinel)" \
+    "- none" \
+    "$(promote_v1_row nvim picker)"
+
+assert_eq "nvim+empty → none kind" \
+    "- none" \
+    "$(promote_v1_row nvim '')"
+
+assert_eq "just+dev → recipe kind, sid preserved" \
+    "dev recipe" \
+    "$(promote_v1_row just dev)"
+
+assert_eq "just+complex-recipe-name → recipe kind" \
+    "test:unit recipe" \
+    "$(promote_v1_row just test:unit)"
+
+assert_eq "unknown tool → none kind" \
+    "- none" \
+    "$(promote_v1_row xargs foo)"
+
+assert_eq "claude+UPPERCASE UUID → normalized lowercase, uuid kind" \
+    "0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf uuid" \
+    "$(promote_v1_row claude 0CBB1761-1A50-4CC4-8E7D-7B4BBDC788BF)"
+
+assert_eq "claude+mixed-case UUID → normalized lowercase" \
+    "0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf uuid" \
+    "$(promote_v1_row claude 0cbb1761-1A50-4cc4-8E7D-7b4bbdc788bf)"
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"

@@ -63,6 +63,35 @@ snapshot_detect_version() {
     echo 0
 }
 
+promote_v1_row() {
+    local tool="$1"
+    local sid="$2"
+
+    case "$tool" in
+        claude|codex)
+            if [ "$sid" = "picker" ]; then
+                echo "picker picker"
+                return
+            fi
+
+            local normalized_sid
+            normalized_sid=$(printf '%s' "$sid" | tr 'A-F' 'a-f')
+            if [[ "$normalized_sid" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+                echo "$normalized_sid uuid"
+                return
+            fi
+            ;;
+        just)
+            if [ -n "$sid" ]; then
+                echo "$sid recipe"
+                return
+            fi
+            ;;
+    esac
+
+    echo "- none"
+}
+
 snapshot_write_row() {
     local target="$1"
     local tool="$2"
