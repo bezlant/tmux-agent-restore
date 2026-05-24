@@ -48,7 +48,10 @@ snapshot_detect_version() {
             return
         fi
         [[ "$line" == \#* ]] && continue
-        [ -z "$line" ] && continue
+        case "$line" in
+            *[![:space:]]*) ;;
+            *) continue ;;
+        esac
         if [[ "$line" == *"|"* ]] && [[ "$line" != *$'\t'* ]]; then
             echo 1
             return

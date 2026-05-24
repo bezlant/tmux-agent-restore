@@ -777,6 +777,16 @@ assert_eq "comments-only file → version 0" \
     "0" \
     "$(snapshot_detect_version "$tmpdir/comments-only.txt")"
 
+printf '# only a comment\n  \n\t\n# another\n' > "$tmpdir/comments-whitespace-only.txt"
+assert_eq "comments plus whitespace-only lines → version 0" \
+    "0" \
+    "$(snapshot_detect_version "$tmpdir/comments-whitespace-only.txt")"
+
+printf '  \n\t\n0:1.1|codex|abc|/cwd|x\n' > "$tmpdir/v1-after-whitespace.txt"
+assert_eq "whitespace-only lines before pipe row → version 1" \
+    "1" \
+    "$(snapshot_detect_version "$tmpdir/v1-after-whitespace.txt")"
+
 rm -rf "$tmpdir"
 
 # ============================================================
