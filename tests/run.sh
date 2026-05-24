@@ -1553,6 +1553,25 @@ assert_eq "agent_detect_from_options returns picker when live agent has no UUID"
     "$(printf 'claude\tpicker\tpicker\t/option/cwd')" \
     "$(adapter_detect_agent "%1" claude @claude_session_id @claude_session_pid @claude_cwd)"
 
+MOCK_LIVE_PID=222
+MOCK_OPTION_PID=222
+MOCK_OPTION_SID=0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf
+MOCK_OPTION_CWD=
+MOCK_EXTRACT_UUID=
+assert_eq "agent_detect_from_options falls back to pane cwd when cwd option missing" \
+    "$(printf 'claude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/pane/cwd')" \
+    "$(adapter_detect_agent "%1" claude @claude_session_id @claude_session_pid @claude_cwd)"
+
+MOCK_LIVE_PID=
+no_live_output=$(adapter_detect_agent "%1" claude @claude_session_id @claude_session_pid @claude_cwd)
+no_live_status=$?
+assert_eq "agent_detect_from_options misses when no live agent" \
+    "" \
+    "$no_live_output"
+assert_eq "agent_detect_from_options no live agent returns nonzero" \
+    "1" \
+    "$no_live_status"
+
 unset -f tmux live_agent_pid process_command extract_uuid
 rm -rf "$tmpdir"
 
