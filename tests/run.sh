@@ -586,6 +586,41 @@ rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
+echo "=== lib/tsv: tsv_encode ==="
+# ============================================================
+# shellcheck source=../lib/tsv.sh
+. "$PLUGIN_DIR/lib/tsv.sh"
+
+assert_eq "encode plain ascii unchanged" \
+    "hello world" \
+    "$(tsv_encode 'hello world')"
+
+assert_eq "encode escapes percent FIRST" \
+    "100%25" \
+    "$(tsv_encode '100%')"
+
+assert_eq "encode escapes tab" \
+    "a%09b" \
+    "$(tsv_encode "$(printf 'a\tb')")"
+
+assert_eq "encode escapes newline" \
+    "a%0Ab" \
+    "$(tsv_encode "$(printf 'a\nb')")"
+
+assert_eq "encode escapes carriage return" \
+    "a%0Db" \
+    "$(tsv_encode "$(printf 'a\rb')")"
+
+assert_eq "encode escapes empty string" \
+    "" \
+    "$(tsv_encode '')"
+
+assert_eq "encode does not double-encode existing %09" \
+    "lit%2509" \
+    "$(tsv_encode 'lit%09')"
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
