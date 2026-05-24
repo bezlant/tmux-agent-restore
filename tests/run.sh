@@ -664,6 +664,27 @@ done
 
 # ============================================================
 echo ""
+echo "=== lib/snapshot: write_header ==="
+# ============================================================
+# shellcheck source=../lib/snapshot.sh
+. "$PLUGIN_DIR/lib/snapshot.sh"
+
+header=$(snapshot_write_header)
+
+assert_contains "header includes version marker v2" \
+    "# tmux-claude snapshot v2" \
+    "$header"
+
+assert_contains "header lists all 8 field names" \
+    "target	tool	sid	sid_kind	cwd	original_cwd	wname	flags" \
+    "$header"
+
+assert_eq "SNAPSHOT_VERSION constant is set" \
+    "2" \
+    "$SNAPSHOT_VERSION"
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
