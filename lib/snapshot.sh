@@ -63,6 +63,9 @@ snapshot_detect_version() {
     echo 0
 }
 
+# promote_v1_row <tool> <sid>
+# Emits "<sid> <sid_kind>". Consumers must split on the LAST space:
+# sid_kind is the final token, and sid may contain spaces for just recipes.
 promote_v1_row() {
     local tool="$1"
     local sid="$2"
@@ -70,26 +73,26 @@ promote_v1_row() {
     case "$tool" in
         claude|codex)
             if [ "$sid" = "picker" ]; then
-                echo "picker picker"
+                printf '%s %s\n' "picker" "picker"
                 return
             fi
 
             local normalized_sid
             normalized_sid=$(printf '%s' "$sid" | tr 'A-F' 'a-f')
             if [[ "$normalized_sid" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
-                echo "$normalized_sid uuid"
+                printf '%s %s\n' "$normalized_sid" "uuid"
                 return
             fi
             ;;
         just)
             if [ -n "$sid" ]; then
-                echo "$sid recipe"
+                printf '%s %s\n' "$sid" "recipe"
                 return
             fi
             ;;
     esac
 
-    echo "- none"
+    printf '%s %s\n' "-" "none"
 }
 
 snapshot_write_row() {

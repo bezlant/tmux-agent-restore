@@ -826,6 +826,10 @@ assert_eq "just+dev → recipe kind, sid preserved" \
     "dev recipe" \
     "$(promote_v1_row just dev)"
 
+assert_eq "just+spaced-recipe → recipe kind, sid preserved" \
+    "dev server recipe" \
+    "$(promote_v1_row just "dev server")"
+
 assert_eq "just+complex-recipe-name → recipe kind" \
     "test:unit recipe" \
     "$(promote_v1_row just test:unit)"
