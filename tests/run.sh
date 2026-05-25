@@ -490,6 +490,134 @@ unset -f write_save_tmux_stub write_save_ps_stub setup_save_fixture setup_save_j
 
 # ============================================================
 echo ""
+echo "=== SessionStart hooks: pid stamping ==="
+# ============================================================
+
+CLAUDE_HOOK="/Users/abezlyudniy/.config/claude/hooks/tmux-session-tracker.sh"
+CODEX_HOOK="/Users/abezlyudniy/.config/codex/bin/tmux-session-tracker.sh"
+
+write_hook_tmux_stub() {
+    local tmux_path="$1"
+
+    cat > "$tmux_path" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${TMUX_HOOK_LOG:?}"
+
+case "${1:-}" in
+    display-message)
+        case "$*" in
+            *"#{pane_current_command}"*)
+                printf '%s\n' "${TMUX_STUB_PANE_COMMAND:-fish}"
+                ;;
+            *)
+                exit 1
+                ;;
+        esac
+        ;;
+esac
+EOF
+    chmod +x "$tmux_path"
+}
+
+setup_hook_fixture() {
+    local tmpdir="$1"
+
+    mkdir -p "$tmpdir/home" "$tmpdir/bin" "$tmpdir/plugin/lib"
+    write_hook_tmux_stub "$tmpdir/bin/tmux"
+    cat > "$tmpdir/plugin/lib/process.sh" <<'EOF'
+live_agent_pid() { printf '%s\n' 4242; }
+EOF
+}
+
+run_hook_fixture() {
+    local hook_script="$1"
+    local tmpdir="$2"
+    local session_id="$3"
+    local cwd="$4"
+    local hook_pid_file="$tmpdir/hook.pid"
+    local json
+
+    json="{\"session_id\":\"$session_id\",\"cwd\":\"$cwd\"}"
+    TMUX=1 \
+    TMUX_PANE="%1" \
+    TMUX_CLAUDE_PLUGIN_DIR="$tmpdir/plugin" \
+    TMUX_HOOK_LOG="$tmpdir/tmux.log" \
+    TMUX_STUB_PANE_COMMAND="fish" \
+    HOME="$tmpdir/home" \
+    PATH="$tmpdir/bin:$PATH" \
+    HOOK_SCRIPT="$hook_script" \
+    HOOK_PID_FILE="$hook_pid_file" \
+        bash -c 'printf "%s\n" "$$" > "$HOOK_PID_FILE"; exec bash "$HOOK_SCRIPT"' <<<"$json"
+}
+
+if [ ! -f "$CLAUDE_HOOK" ]; then
+    echo "  WARN: Claude SessionStart hook missing at $CLAUDE_HOOK; skipping hook integration test"
+else
+    tmpdir=$(mktemp -d)
+    setup_hook_fixture "$tmpdir"
+    claude_cwd="$tmpdir/claude-cwd"
+    run_hook_fixture "$CLAUDE_HOOK" "$tmpdir" "claude-hook-session" "$claude_cwd"
+    hook_rc=$?
+    hook_log=$(cat "$tmpdir/tmux.log" 2>/dev/null || true)
+    hook_pid=$(cat "$tmpdir/hook.pid" 2>/dev/null || true)
+
+    assert_eq "Claude hook exits 0" "0" "$hook_rc"
+    assert_contains "Claude hook sets @claude_session_id" \
+        "set-option -p -t %1 @claude_session_id claude-hook-session" "$hook_log"
+    assert_contains "Claude hook sets @claude_session_pid 4242" \
+        "set-option -p -t %1 @claude_session_pid 4242" "$hook_log"
+    assert_contains "Claude hook sets @claude_cwd" \
+        "set-option -p -t %1 @claude_cwd $claude_cwd" "$hook_log"
+    assert_contains "Claude hook clears @codex_session_id" \
+        "set-option -pu -t %1 @codex_session_id" "$hook_log"
+    assert_contains "Claude hook clears @codex_cwd" \
+        "set-option -pu -t %1 @codex_cwd" "$hook_log"
+    assert_contains "Claude hook clears @codex_session_pid" \
+        "set-option -pu -t %1 @codex_session_pid" "$hook_log"
+    assert_not_contains "Claude hook does not write test runner pid as session pid" \
+        "@claude_session_pid $$" "$hook_log"
+    assert_not_contains "Claude hook does not write hook process pid as session pid" \
+        "@claude_session_pid $hook_pid" "$hook_log"
+
+    rm -rf "$tmpdir"
+fi
+
+if [ ! -f "$CODEX_HOOK" ]; then
+    echo "  WARN: Codex SessionStart hook missing at $CODEX_HOOK; skipping hook integration test"
+else
+    tmpdir=$(mktemp -d)
+    setup_hook_fixture "$tmpdir"
+    codex_cwd="$tmpdir/codex-cwd"
+    run_hook_fixture "$CODEX_HOOK" "$tmpdir" "codex-hook-session" "$codex_cwd"
+    hook_rc=$?
+    hook_log=$(cat "$tmpdir/tmux.log" 2>/dev/null || true)
+    hook_pid=$(cat "$tmpdir/hook.pid" 2>/dev/null || true)
+
+    assert_eq "Codex hook exits 0" "0" "$hook_rc"
+    assert_contains "Codex hook sets @codex_session_id" \
+        "set-option -p -t %1 @codex_session_id codex-hook-session" "$hook_log"
+    assert_contains "Codex hook sets @codex_session_pid 4242" \
+        "set-option -p -t %1 @codex_session_pid 4242" "$hook_log"
+    assert_contains "Codex hook sets @codex_cwd" \
+        "set-option -p -t %1 @codex_cwd $codex_cwd" "$hook_log"
+    assert_contains "Codex hook clears @claude_session_id" \
+        "set-option -pu -t %1 @claude_session_id" "$hook_log"
+    assert_contains "Codex hook clears @claude_cwd" \
+        "set-option -pu -t %1 @claude_cwd" "$hook_log"
+    assert_contains "Codex hook clears @claude_session_pid" \
+        "set-option -pu -t %1 @claude_session_pid" "$hook_log"
+    assert_not_contains "Codex hook does not write test runner pid as session pid" \
+        "@codex_session_pid $$" "$hook_log"
+    assert_not_contains "Codex hook does not write hook process pid as session pid" \
+        "@codex_session_pid $hook_pid" "$hook_log"
+
+    rm -rf "$tmpdir"
+fi
+
+unset -f write_hook_tmux_stub setup_hook_fixture run_hook_fixture
+
+# ============================================================
+echo ""
 echo "=== session-restore: paths with spaces ==="
 # ============================================================
 
