@@ -1924,6 +1924,142 @@ rm -rf "$danger_dir"
 
 # ============================================================
 echo ""
+echo "=== lib/restore_log: best-effort logging ==="
+# ============================================================
+# shellcheck source=../lib/restore_log.sh
+. "$PLUGIN_DIR/lib/restore_log.sh"
+
+tmpdir=$(mktemp -d)
+logfile="$tmpdir/restore.log"
+
+restore_log_open "$logfile"
+restore_log BEGIN "snapshot=claude-panes.txt dry_run=true"
+restore_log OK "0:1.1 claude abc"
+restore_log_close
+
+assert_contains "restore_log writes BEGIN line" \
+    "BEGIN snapshot=claude-panes.txt dry_run=true" \
+    "$(cat "$logfile")"
+assert_contains "restore_log writes OK line" \
+    "OK 0:1.1 claude abc" \
+    "$(cat "$logfile")"
+
+fd_log="$tmpdir/fd-leak.log"
+fd_bad="$tmpdir/fd-bad-dir"
+mkdir "$fd_bad"
+restore_log_open "$fd_log"
+restore_log OK "before failed reopen"
+restore_log_open "$fd_bad"
+restore_log_close
+fd_log_size_before_probe=$(wc -c < "$fd_log" | tr -d ' ')
+fd9_write_rc=$((printf x >&9) 2>/dev/null; echo $?)
+fd_log_size_after_probe=$(wc -c < "$fd_log" | tr -d ' ')
+assert_eq "restore_log failed reopen closes fd 9" \
+    "1" \
+    "$fd9_write_rc"
+assert_eq "restore_log failed reopen does not write to old log" \
+    "$fd_log_size_before_probe" \
+    "$fd_log_size_after_probe"
+
+bad_fd_stderr="$tmpdir/bad-fd-stderr"
+bad_fd_rc_file="$tmpdir/bad-fd-rc"
+exec 9>&- 2>/dev/null || true
+{
+    RESTORE_LOG_FD_OPEN=1
+    restore_log WARN "bad fd"
+    bad_fd_rc=$?
+    RESTORE_LOG_FD_OPEN=0
+    printf '%s' "$bad_fd_rc" > "$bad_fd_rc_file"
+} 2> "$bad_fd_stderr"
+assert_eq "restore_log bad fd returns zero" \
+    "0" \
+    "$(cat "$bad_fd_rc_file")"
+assert_eq "restore_log bad fd is silent on stderr" \
+    "" \
+    "$(cat "$bad_fd_stderr")"
+
+rel_tmpdir="$tmpdir/relative"
+mkdir -p "$rel_tmpdir"
+(
+    cd "$rel_tmpdir" || exit 1
+    restore_log_open "restore.log"
+    restore_log OK "relative path"
+    restore_log_close
+) 2> "$tmpdir/relative-stderr"
+assert_eq "restore_log relative path creates file not directory" \
+    "file" \
+    "$([ -f "$rel_tmpdir/restore.log" ] && echo file || ([ -d "$rel_tmpdir/restore.log" ] && echo dir || echo missing))"
+assert_contains "restore_log relative path writes line" \
+    "OK relative path" \
+    "$(cat "$rel_tmpdir/restore.log" 2>/dev/null || true)"
+
+big_payload=$(printf 'x%.0s' $(seq 1 1100000))
+printf '%s' "$big_payload" > "$logfile"
+restore_log_open "$logfile"
+restore_log BEGIN "rotated"
+restore_log_close
+assert_eq "restore_log rotates existing large log" \
+    "yes" \
+    "$([ -f "$logfile.1" ] && echo yes || echo no)"
+assert_contains "restore_log writes new log after rotation" \
+    "BEGIN rotated" \
+    "$(cat "$logfile")"
+
+bad_parent="$tmpdir/not-a-dir"
+printf 'file' > "$bad_parent"
+restore_log_open "$bad_parent/restore.log"
+restore_log WARN "unwritable path does not abort"
+restore_log_close
+assert_eq "restore_log ignores open failure" \
+    "0" \
+    "$?"
+
+dir_log="$tmpdir/log-as-dir"
+mkdir "$dir_log"
+stderr_file="$tmpdir/stderr"
+rcs_file="$tmpdir/rcs"
+{
+    restore_log_open "$dir_log"
+    open_rc=$?
+    restore_log WARN "directory target does not abort"
+    log_rc=$?
+    restore_log_close
+    close_rc=$?
+    printf '%s:%s:%s' "$open_rc" "$log_rc" "$close_rc" > "$rcs_file"
+} 2> "$stderr_file"
+assert_eq "restore_log impossible path returns zero" \
+    "0:0:0" \
+    "$(cat "$rcs_file")"
+assert_eq "restore_log impossible path is silent on stderr" \
+    "" \
+    "$(cat "$stderr_file")"
+
+invalid_max_log="$tmpdir/invalid-max.log"
+printf 'data' > "$invalid_max_log"
+invalid_max_stderr="$tmpdir/invalid-max-stderr"
+old_restore_log_max_bytes="$RESTORE_LOG_MAX_BYTES"
+{
+    RESTORE_LOG_MAX_BYTES=bogus
+    restore_log_open "$invalid_max_log"
+    invalid_max_open_rc=$?
+    restore_log WARN "invalid max bytes does not abort"
+    invalid_max_log_rc=$?
+    restore_log_close
+    invalid_max_close_rc=$?
+    RESTORE_LOG_MAX_BYTES="$old_restore_log_max_bytes"
+    printf '%s:%s:%s' "$invalid_max_open_rc" "$invalid_max_log_rc" "$invalid_max_close_rc" > "$tmpdir/invalid-max-rcs"
+} 2> "$invalid_max_stderr"
+assert_eq "restore_log invalid max bytes returns zero" \
+    "0:0:0" \
+    "$(cat "$tmpdir/invalid-max-rcs")"
+assert_eq "restore_log invalid max bytes is silent on stderr" \
+    "" \
+    "$(cat "$invalid_max_stderr")"
+
+rm -rf "$tmpdir"
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
