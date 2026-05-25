@@ -46,6 +46,14 @@ if [ "$install_opt" != "off" ]; then
     if [ -d "$fish_dir" ]; then
         cp "$SHELL_DIR/__tmux_claude_session_args.fish" "$fish_dir/" 2>/dev/null
 
+        tres_marker="# tmux-claude:tres"
+        tres_target="$fish_dir/tres.fish"
+        if [ -f "$SHELL_DIR/tres.fish" ] && [ ! -f "$tres_target" ]; then
+            cp "$SHELL_DIR/tres.fish" "$tres_target" 2>/dev/null
+        elif [ -f "$tres_target" ] && ! grep -q "$tres_marker" "$tres_target" 2>/dev/null; then
+            tmux display-message "tmux-claude: tres.fish already exists — see $SHELL_DIR/tres.fish"
+        fi
+
         if [ ! -f "$fish_dir/claude.fish" ]; then
             cp "$SHELL_DIR/claude.fish" "$fish_dir/claude.fish" 2>/dev/null
         elif ! grep -q "$marker" "$fish_dir/claude.fish" 2>/dev/null; then

@@ -920,6 +920,130 @@ fi
 
 # ============================================================
 echo ""
+echo "=== claude.tmux: tres auto-install ==="
+# ============================================================
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+tmux_home="$tmpdir/home"
+mkdir -p "$tmpbin" "$tmux_home/.config/fish/functions"
+
+cat > "$tmpbin/tmux" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+    show-option)
+        case "$*" in
+            *"@tmux-claude-auto-install-wrapper"*) exit 1 ;;
+            *"@resurrect-dir"*) exit 1 ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    show-environment)
+        exit 1
+        ;;
+    display-message)
+        printf '%s\n' "$*" >> "$TMUX_STUB_LOG"
+        exit 0
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+EOF
+chmod +x "$tmpbin/tmux"
+
+old_path="$PATH"
+PATH="$tmpbin:$PATH"
+HOME="$tmux_home" TMUX_STUB_LOG="$tmpdir/tmux.log" bash "$PLUGIN_DIR/claude.tmux"
+rc=$?
+PATH="$old_path"
+
+assert_eq "claude.tmux auto-install exits 0" "0" "$rc"
+assert_eq "claude.tmux installs tres fish function" \
+    "present" \
+    "$([ -f "$tmux_home/.config/fish/functions/tres.fish" ] && echo present || echo absent)"
+assert_contains "installed tres contains function" \
+    "function tres" \
+    "$(cat "$tmux_home/.config/fish/functions/tres.fish" 2>/dev/null || true)"
+assert_eq "claude.tmux still installs session args helper" \
+    "present" \
+    "$([ -f "$tmux_home/.config/fish/functions/__tmux_claude_session_args.fish" ] && echo present || echo absent)"
+
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+tmux_home="$tmpdir/home"
+mkdir -p "$tmpbin" "$tmux_home/.config/fish/functions"
+printf '%s\n' "function tres; echo user; end" > "$tmux_home/.config/fish/functions/tres.fish"
+
+cat > "$tmpbin/tmux" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+    show-option) exit 1 ;;
+    show-environment) exit 1 ;;
+    display-message)
+        printf '%s\n' "$*" >> "$TMUX_STUB_LOG"
+        exit 0
+        ;;
+    *) exit 1 ;;
+esac
+EOF
+chmod +x "$tmpbin/tmux"
+
+old_path="$PATH"
+PATH="$tmpbin:$PATH"
+HOME="$tmux_home" TMUX_STUB_LOG="$tmpdir/tmux.log" bash "$PLUGIN_DIR/claude.tmux"
+rc=$?
+PATH="$old_path"
+
+installed_tres=$(cat "$tmux_home/.config/fish/functions/tres.fish")
+display_log=$(cat "$tmpdir/tmux.log" 2>/dev/null || true)
+assert_eq "claude.tmux existing tres exits 0" "0" "$rc"
+assert_eq "claude.tmux does not overwrite existing tres" \
+    "function tres; echo user; end" \
+    "$installed_tres"
+assert_contains "claude.tmux warns when existing tres is not plugin managed" \
+    "tmux-claude: tres.fish already exists" "$display_log"
+
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+tmux_home="$tmpdir/home"
+mkdir -p "$tmpbin" "$tmux_home/.config/fish/functions"
+
+cat > "$tmpbin/tmux" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+    show-option)
+        case "$*" in
+            *"@tmux-claude-auto-install-wrapper"*) printf '%s\n' off; exit 0 ;;
+            *"@resurrect-dir"*) exit 1 ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    show-environment) exit 1 ;;
+    *) exit 1 ;;
+esac
+EOF
+chmod +x "$tmpbin/tmux"
+
+old_path="$PATH"
+PATH="$tmpbin:$PATH"
+HOME="$tmux_home" bash "$PLUGIN_DIR/claude.tmux"
+rc=$?
+PATH="$old_path"
+
+assert_eq "claude.tmux auto-install off exits 0" "0" "$rc"
+assert_eq "claude.tmux skips tres install when auto-install off" \
+    "absent" \
+    "$([ -f "$tmux_home/.config/fish/functions/tres.fish" ] && echo present || echo absent)"
+
+rm -rf "$tmpdir"
+
+# ============================================================
+echo ""
 echo "=== stale pane option clearing ==="
 # ============================================================
 
