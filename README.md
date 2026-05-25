@@ -72,13 +72,13 @@ Automatically saves which panes run Claude/Codex/nvim/just and restores them aft
 1. `prefix + S` (resurrect save) triggers the post-save hook which records all pane→session mappings
 2. `prefix + R` (resurrect restore) triggers the post-restore hook which sends resume commands to each pane
 
-**Mapping format:** `~/.config/tmux/resurrect/claude-panes.txt` uses `snapshot v2`, an eight-column TSV format:
+**Mapping format:** `claude-panes.txt` lives in the configured `@resurrect-dir` and uses `snapshot v2`, an eight-column TSV format:
 
 ```text
 target    tool    sid    sid_kind    cwd    original_cwd    wname    flags
 ```
 
-Legacy pipe-delimited snapshots are still readable during restore.
+If `@resurrect-dir` is not set, save/restore use `~/.tmux/resurrect`. Legacy pipe-delimited snapshots are still readable during restore.
 
 Restore writes `restore.log` beside the snapshot with `BEGIN`, `OK`, `WARN`, `SKIP`, and `END` lines so failed or degraded panes can be inspected after restore.
 

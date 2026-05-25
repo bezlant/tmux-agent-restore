@@ -1,6 +1,13 @@
 # tmux-claude:tres
 function tres --description "Attach to restored tmux session, waiting for restore to complete"
     set -l bootstrap_name "_tres_bootstrap"
+    set -l created_bootstrap 0
+    if not tmux has-session >/dev/null 2>&1
+        if tmux new-session -d -s "$bootstrap_name"
+            set created_bootstrap 1
+        end
+    end
+
     set -l resurrect_dir (tmux show-option -gqv @resurrect-dir 2>/dev/null)
     if test -z "$resurrect_dir"
         set resurrect_dir "$HOME/.config/tmux/resurrect"
@@ -22,17 +29,11 @@ function tres --description "Attach to restored tmux session, waiting for restor
         set target_session "0"
     end
 
-    set -l created_bootstrap 0
-    if not tmux has-session >/dev/null 2>&1
-        tmux new-session -d -s "$bootstrap_name"
-        set created_bootstrap 1
-    end
-
     set -l prev_count 0
     set -l stable 0
     for _i in (seq 75)
         set -l count (tmux list-windows -t "$target_session" 2>/dev/null | wc -l | string trim)
-        if test "$count" -ge 2; and test "$count" = "$prev_count"
+        if test "$count" -ge 1; and test "$count" = "$prev_count"
             set stable (math "$stable" + 1)
             if test "$stable" -ge 2
                 break

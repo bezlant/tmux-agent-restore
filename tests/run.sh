@@ -3723,6 +3723,138 @@ assert_not_contains "tres does not fall back when custom resurrect snapshot exis
 
 rm -rf "$tmpdir"
 
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+tmphome="$tmpdir/home"
+custom_resurrect="$tmpdir/custom-resurrect"
+server_started="$tmpdir/server-started"
+mkdir -p "$tmpbin" "$tmphome/.config/tmux/resurrect" "$custom_resurrect"
+
+cat > "$tmpbin/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TMUX_STUB_LOG"
+case "$1" in
+    show-option)
+        if [ -f "$TMUX_SERVER_STARTED" ]; then
+            case "$*" in
+                *"@resurrect-dir"*) printf '%s\n' "$CUSTOM_RESURRECT_DIR"; exit 0 ;;
+            esac
+        fi
+        exit 1
+        ;;
+    has-session)
+        [ -f "$TMUX_SERVER_STARTED" ] && exit 0
+        exit 1
+        ;;
+    new-session)
+        touch "$TMUX_SERVER_STARTED"
+        exit 0
+        ;;
+    list-windows)
+        target=""
+        while [ "$#" -gt 0 ]; do
+            if [ "$1" = "-t" ]; then
+                shift
+                target="${1:-}"
+                break
+            fi
+            shift
+        done
+        [ "$target" = "work" ] || exit 1
+        printf '%s\n' "1: fine-tuning" "2: seo"
+        ;;
+    kill-session) exit 0 ;;
+    attach) exit 0 ;;
+    *) exit 1 ;;
+esac
+EOF
+chmod +x "$tmpbin/tmux"
+cat > "$tmpbin/sleep" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$tmpbin/sleep"
+
+cat > "$custom_resurrect/last" <<'EOF'
+pane	work	1	0	:	1	editor	:/repo	1	fish	:
+EOF
+
+old_path="$PATH"
+PATH="$tmpbin:$PATH"
+TMUX_STUB_LOG="$tmpdir/tmux.log" \
+HOME="$tmphome" \
+XDG_CONFIG_HOME="$tmphome/.config" \
+CUSTOM_RESURRECT_DIR="$custom_resurrect" \
+TMUX_SERVER_STARTED="$server_started" \
+fish -c 'source "$argv[1]"; tres' "$PLUGIN_DIR/shell/tres.fish"
+rc=$?
+PATH="$old_path"
+
+log=$(cat "$tmpdir/tmux.log")
+assert_eq "tres exits 0 with custom resurrect dir after bootstrap" "0" "$rc"
+assert_contains "tres creates bootstrap before reading custom resurrect dir" \
+    "new-session -d -s _tres_bootstrap" "$log"
+assert_contains "tres attaches to custom resurrect session after bootstrap" "attach -t work" "$log"
+assert_not_contains "tres does not fall back after bootstrap reveals custom resurrect dir" "attach -t 0" "$log"
+
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+tmphome="$tmpdir/home"
+mkdir -p "$tmpbin" "$tmphome/.config/tmux/resurrect"
+
+cat > "$tmpbin/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TMUX_STUB_LOG"
+case "$1" in
+    show-option) exit 1 ;;
+    has-session) exit 0 ;;
+    list-windows)
+        target=""
+        while [ "$#" -gt 0 ]; do
+            if [ "$1" = "-t" ]; then
+                shift
+                target="${1:-}"
+                break
+            fi
+            shift
+        done
+        [ "$target" = "work" ] || exit 1
+        printf '%s\n' "1: fine-tuning"
+        ;;
+    attach) exit 0 ;;
+    *) exit 1 ;;
+esac
+EOF
+chmod +x "$tmpbin/tmux"
+cat > "$tmpbin/sleep" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$SLEEP_STUB_LOG"
+exit 0
+EOF
+chmod +x "$tmpbin/sleep"
+
+cat > "$tmphome/.config/tmux/resurrect/last" <<'EOF'
+pane	work	1	0	:	1	editor	:/repo	1	fish	:
+EOF
+
+old_path="$PATH"
+PATH="$tmpbin:$PATH"
+TMUX_STUB_LOG="$tmpdir/tmux.log" \
+SLEEP_STUB_LOG="$tmpdir/sleep.log" \
+HOME="$tmphome" \
+XDG_CONFIG_HOME="$tmphome/.config" \
+fish -c 'source "$argv[1]"; tres' "$PLUGIN_DIR/shell/tres.fish"
+rc=$?
+PATH="$old_path"
+
+sleep_count=$(wc -l < "$tmpdir/sleep.log" | tr -d ' ')
+assert_eq "tres exits 0 with one-window restored session" "0" "$rc"
+assert_eq "tres does not wait full timeout for one-window session" "2" "$sleep_count"
+
+rm -rf "$tmpdir"
+
 if command -v fish >/dev/null 2>&1; then
     fish -n "$PLUGIN_DIR/shell/tres.fish"
     assert_eq "tres fish syntax is valid" "0" "$?"
@@ -3739,6 +3871,8 @@ readme_content=$(cat "$PLUGIN_DIR/README.md")
 assert_contains "README documents tres helper" "tres" "$readme_content"
 assert_contains "README documents v2 snapshot format" "snapshot v2" "$readme_content"
 assert_contains "README documents restore.log observability" "restore.log" "$readme_content"
+assert_contains "README documents configured resurrect dir mapping location" "configured `@resurrect-dir`" "$readme_content"
+assert_contains "README documents save/restore fallback mapping location" "~/.tmux/resurrect" "$readme_content"
 
 # ============================================================
 echo ""
