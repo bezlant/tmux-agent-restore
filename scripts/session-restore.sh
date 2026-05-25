@@ -121,7 +121,7 @@ while IFS= read -r row || [ -n "$row" ]; do
     pane_shell=$(tmux display-message -p -t "$target" '#{pane_current_command}' 2>/dev/null || true)
     case "$pane_shell" in
         fish|bash|zsh|sh|dash|ksh) ;;
-        *) pane_shell=sh ;;
+        *) pane_shell="sh" ;;
     esac
 
     if ! cmd=$(shell_quote_argv "$pane_shell" "$argv"); then
@@ -144,17 +144,24 @@ while IFS= read -r row || [ -n "$row" ]; do
         continue
     fi
 
-    if restore_send_keys "$target" "$full"; then
-        if restore_flag_has "$flags" cwd_collapsed; then
-            warn=$((warn + 1))
-            restore_log WARN "$target $tool cwd_collapsed orig=$original_cwd new=$cwd"
-        else
-            ok=$((ok + 1))
-            restore_log OK "target=$target tool=$tool"
-        fi
-    else
+    if ! wait_for_prompt "$target"; then
+        skip=$((skip + 1))
+        restore_log SKIP "$target $tool prompt_wait_timeout"
+        continue
+    fi
+
+    if ! restore_send_keys "$target" "$full"; then
         warn=$((warn + 1))
-        restore_log WARN "target=$target tool=$tool send_keys_failed"
+        restore_log WARN "$target $tool send_keys_failed"
+        continue
+    fi
+
+    if restore_flag_has "$flags" cwd_collapsed; then
+        warn=$((warn + 1))
+        restore_log WARN "$target $tool cwd_collapsed orig=$original_cwd new=$cwd"
+    else
+        ok=$((ok + 1))
+        restore_log OK "$target $tool $sid"
     fi
 done < "$snapshot_tmp"
 

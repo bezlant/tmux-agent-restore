@@ -2445,6 +2445,97 @@ rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
+echo "=== session-restore: live prompt wait and error isolation ==="
+# ============================================================
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+resurrect_dir="$tmpdir/resurrect"
+mkdir -p "$tmpbin" "$resurrect_dir"
+
+cat > "$resurrect_dir/claude-panes.txt" <<'EOF'
+# tmux-claude snapshot v2
+# fields: target	tool	sid	sid_kind	cwd	original_cwd	wname	flags
+0:1.1	claude	0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf	uuid	/repo/one		one	-
+0:2.1	codex	019dd3be-9166-7750-8039-a1f9ecdad1f3	uuid	/repo/two		two	-
+EOF
+
+cat > "$tmpbin/tmux" <<EOF
+#!/usr/bin/env bash
+case "\$1" in
+    show-option)
+        if [ "\$4" = "@resurrect-dir" ] || [ "\$3" = "@resurrect-dir" ]; then
+            printf '%s\n' "$resurrect_dir"
+            exit 0
+        fi
+        exit 1
+        ;;
+    display-message)
+        case "\$*" in
+            *"#{pane_current_command}"*)
+                case "\$*" in
+                    *"0:1.1"*) printf '%s\n' claude ;;
+                    *) printf '%s\n' fish ;;
+                esac
+                ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    list-panes)
+        printf '%s\n' x
+        ;;
+    send-keys)
+        printf '%s\n' "\$*" >> "$tmpdir/send-keys.log"
+        ;;
+    capture-pane)
+        if [ -f "$tmpdir/send-keys.log" ] && \
+            grep -qF "printf '%s\\n' __tcready_forced__" "$tmpdir/send-keys.log"; then
+            printf '%s\n' "__tcready_forced__"
+        fi
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+EOF
+chmod +x "$tmpbin/tmux"
+
+ORIG_PATH="$PATH"
+PATH="$tmpbin:$PATH"
+TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 \
+TMUX_CLAUDE_READY_MARKER="__tcready_forced__" \
+TMUX_CLAUDE_PROMPT_ATTEMPTS=1 \
+TMUX_CLAUDE_PROMPT_SLEEP=0 \
+bash "$PLUGIN_DIR/scripts/session-restore.sh"
+rc=$?
+PATH="$ORIG_PATH"
+
+send_log=$(cat "$tmpdir/send-keys.log")
+restore_log_content=$(cat "$resurrect_dir/restore.log")
+assert_eq "restore live exits 0 despite one busy pane" "0" "$rc"
+assert_contains "restore live logs prompt wait skip for busy pane" \
+    "SKIP 0:1.1 claude prompt_wait_timeout" "$restore_log_content"
+assert_contains "restore live waits with marker before sending restore command" \
+    "printf '%s\\n' __tcready_forced__" "$send_log"
+assert_not_contains "restore live does not send busy pane restore command" \
+    "'ccy' '--name' 'one' '--resume' '0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf'" "$send_log"
+assert_contains "restore live sends second pane command after marker" \
+    "'cxy' 'resume' '019dd3be-9166-7750-8039-a1f9ecdad1f3'" "$send_log"
+marker_line=$(printf '%s\n' "$send_log" | grep -nF "printf '%s\\n' __tcready_forced__" | sed -n '1p' | cut -d: -f1)
+restore_line=$(printf '%s\n' "$send_log" | grep -nF "'cxy' 'resume' '019dd3be-9166-7750-8039-a1f9ecdad1f3'" | sed -n '1p' | cut -d: -f1)
+marker_order="marker_order_failed marker=$marker_line restore=$restore_line"
+if [ -n "$marker_line" ] && [ -n "$restore_line" ] && [ "$marker_line" -lt "$restore_line" ]; then
+    marker_order="marker_before_restore"
+fi
+assert_eq "restore live marker send precedes second pane command" \
+    "marker_before_restore" "$marker_order"
+assert_contains "restore live continues after skipped pane" \
+    "OK 0:2.1 codex 019dd3be-9166-7750-8039-a1f9ecdad1f3" "$restore_log_content"
+
+rm -rf "$tmpdir"
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
