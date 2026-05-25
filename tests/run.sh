@@ -188,6 +188,276 @@ rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
+echo "=== session-save: adapter-driven v2 snapshot ==="
+# ============================================================
+
+unset -f tmux live_agent_pid process_command extract_uuid adapter_detect_agent 2>/dev/null || true
+
+# shellcheck source=../lib/snapshot.sh
+. "$PLUGIN_DIR/lib/snapshot.sh"
+
+write_save_tmux_stub() {
+    local tmux_path="$1"
+    local fixture_dir="$2"
+
+    cat > "$tmux_path" <<EOF
+#!/usr/bin/env bash
+fixture_dir='$fixture_dir'
+read_file() {
+    [ -f "\$fixture_dir/\$1" ] || return 1
+    cat "\$fixture_dir/\$1"
+}
+
+case "\$1" in
+    show-option)
+        case "\$*" in
+            *"@resurrect-dir"*) read_file resurrect_dir; exit 0 ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    list-sessions)
+        read_file sessions || true
+        ;;
+    list-windows)
+        read_file windows || true
+        ;;
+    list-panes)
+        read_file panes || true
+        ;;
+    display-message)
+        case "\$*" in
+            *"#{window_name}"*) read_file window_name || true ;;
+            *"#{pane_current_path}"*) read_file pane_current_path || true ;;
+            *"#{pane_pid}"*) read_file pane_pid || true ;;
+            *"#{pane_current_command}"*) read_file pane_current_command || printf '%s\n' fish ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    show-options)
+        option=""
+        while [ "\$#" -gt 0 ]; do
+            if [ "\$1" = "-v" ]; then
+                shift
+                option="\${1:-}"
+                break
+            fi
+            shift
+        done
+        case "\$option" in
+            @claude_session_id) read_file claude_session_id || true ;;
+            @claude_session_pid) read_file claude_session_pid || true ;;
+            @claude_cwd) read_file claude_cwd || true ;;
+            @codex_session_id) read_file codex_session_id || true ;;
+            @codex_session_pid) read_file codex_session_pid || true ;;
+            @codex_cwd) read_file codex_cwd || true ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    send-keys)
+        printf '%s\n' "\$*" >> "\$fixture_dir/send-keys.log"
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+EOF
+    chmod +x "$tmux_path"
+}
+
+write_save_ps_stub() {
+    local ps_path="$1"
+    local fixture_dir="$2"
+
+    cat > "$ps_path" <<EOF
+#!/usr/bin/env bash
+fixture_dir='$fixture_dir'
+if [ "\$1" = "-axww" ] && [ "\$2" = "-o" ] && [ "\$3" = "pid=,ppid=,command=" ]; then
+    cat "\$fixture_dir/ps_tree"
+elif [ "\$1" = "-p" ] && [ "\$3" = "-o" ] && [ "\$4" = "command=" ]; then
+    case "\$2" in
+        200) cat "\$fixture_dir/ps_command" ;;
+        *) exit 1 ;;
+    esac
+else
+    exit 1
+fi
+EOF
+    chmod +x "$ps_path"
+}
+
+setup_save_fixture() {
+    local fixture_dir="$1"
+    local tool="$2"
+    local sid="$3"
+    local cwd="$4"
+
+    mkdir -p "$fixture_dir/bin" "$fixture_dir/resurrect" "$fixture_dir/home"
+    printf '%s\n' "$fixture_dir/resurrect" > "$fixture_dir/resurrect_dir"
+    printf '%s\n' "0" > "$fixture_dir/sessions"
+    printf '%s\n' "1" > "$fixture_dir/windows"
+    printf '%s\n' "1" > "$fixture_dir/panes"
+    printf '%s\n' "work-win" > "$fixture_dir/window_name"
+    printf '%s\n' "100" > "$fixture_dir/pane_pid"
+    printf '%s\n' "$cwd" > "$fixture_dir/pane_current_path"
+    printf '%s\n' fish > "$fixture_dir/pane_current_command"
+    printf ' 100     1 fish\n 200   100 %s --resume %s\n' "$tool" "$sid" > "$fixture_dir/ps_tree"
+    printf '%s --resume %s\n' "$tool" "$sid" > "$fixture_dir/ps_command"
+    case "$tool" in
+        claude)
+            printf '%s\n' "$sid" > "$fixture_dir/claude_session_id"
+            : > "$fixture_dir/claude_session_pid"
+            printf '%s\n' "$cwd" > "$fixture_dir/claude_cwd"
+            ;;
+        codex)
+            printf '%s\n' "$sid" > "$fixture_dir/codex_session_id"
+            : > "$fixture_dir/codex_session_pid"
+            printf '%s\n' "$cwd" > "$fixture_dir/codex_cwd"
+            ;;
+    esac
+    write_save_tmux_stub "$fixture_dir/bin/tmux" "$fixture_dir"
+    write_save_ps_stub "$fixture_dir/bin/ps" "$fixture_dir"
+}
+
+run_save_fixture() {
+    local fixture_dir="$1"
+    local old_path="$PATH"
+    local old_home_set="${HOME+x}"
+    local old_home="${HOME-}"
+    PATH="$fixture_dir/bin:$PATH"
+    HOME="$fixture_dir/home"
+    bash "$PLUGIN_DIR/scripts/session-save.sh" >/dev/null 2>"$fixture_dir/save.err"
+    local rc=$?
+    PATH="$old_path"
+    if [ -n "$old_home_set" ]; then
+        HOME="$old_home"
+    else
+        unset HOME
+    fi
+    return "$rc"
+}
+
+run_restore_fixture() {
+    local fixture_dir="$1"
+    local old_path="$PATH"
+    PATH="$fixture_dir/bin:$PATH"
+    TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run > "$fixture_dir/restore.out" 2>"$fixture_dir/restore.err"
+    local rc=$?
+    PATH="$old_path"
+    return "$rc"
+}
+
+CLAUDE_UUID_SAVE=0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf
+CODEX_UUID_SAVE=019dd3be-9166-7750-8039-a1f9ecdad1f3
+
+tmpdir=$(mktemp -d)
+setup_save_fixture "$tmpdir" claude "$CLAUDE_UUID_SAVE" "$tmpdir/project"
+mkdir -p "$tmpdir/project" "$tmpdir/home/.claude/projects/work"
+: > "$tmpdir/home/.claude/projects/work/$CLAUDE_UUID_SAVE.jsonl"
+run_save_fixture "$tmpdir"
+save_rc=$?
+assert_eq "save writes v2 fixture exits 0" "0" "$save_rc"
+assert_eq "save writes v2 header" \
+    "# tmux-claude snapshot v2" \
+    "$(sed -n '1p' "$tmpdir/resurrect/claude-panes.txt" 2>/dev/null)"
+rows=$(snapshot_read "$tmpdir/resurrect/claude-panes.txt" 2>/dev/null)
+bad_field_count=$(printf '%s\n' "$rows" | awk -F'\t' 'NF != 8 { print NF; exit }')
+assert_eq "save writes eight fields" "" "$bad_field_count"
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+setup_save_fixture "$tmpdir" claude "$CLAUDE_UUID_SAVE" "$tmpdir/project"
+mkdir -p "$tmpdir/project"
+run_save_fixture "$tmpdir"
+row=$(snapshot_read "$tmpdir/resurrect/claude-panes.txt" 2>/dev/null)
+assert_eq "save_flags_sid_invalid sid cleared" "-" "$(printf '%s' "$row" | cut -f3)"
+assert_eq "save_flags_sid_invalid sid_kind none" "none" "$(printf '%s' "$row" | cut -f4)"
+assert_eq "save_flags_sid_invalid flag set" "sid_invalid" "$(printf '%s' "$row" | cut -f8)"
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+existing_cwd="$tmpdir/project"
+missing_cwd="$existing_cwd/missing/deep"
+setup_save_fixture "$tmpdir" claude "$CLAUDE_UUID_SAVE" "$missing_cwd"
+mkdir -p "$existing_cwd" "$tmpdir/home/.claude/projects/work"
+: > "$tmpdir/home/.claude/projects/work/$CLAUDE_UUID_SAVE.jsonl"
+run_save_fixture "$tmpdir"
+row=$(snapshot_read "$tmpdir/resurrect/claude-panes.txt" 2>/dev/null)
+assert_eq "save_flags_cwd_collapsed cwd uses nearest existing parent" "$existing_cwd" "$(printf '%s' "$row" | cut -f5)"
+assert_eq "save_flags_cwd_collapsed original_cwd preserves missing path" "$missing_cwd" "$(printf '%s' "$row" | cut -f6)"
+assert_eq "save_flags_cwd_collapsed flag set" "cwd_collapsed" "$(printf '%s' "$row" | cut -f8)"
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+existing_cwd="$tmpdir/project"
+missing_cwd="$existing_cwd/missing/deep"
+setup_save_fixture "$tmpdir" claude "$CLAUDE_UUID_SAVE" "$missing_cwd"
+mkdir -p "$existing_cwd"
+run_save_fixture "$tmpdir"
+row=$(snapshot_read "$tmpdir/resurrect/claude-panes.txt" 2>/dev/null)
+assert_eq "save_flags_both_semicolon_separated sid cleared" "-" "$(printf '%s' "$row" | cut -f3)"
+assert_eq "save_flags_both_semicolon_separated flags ordered" "sid_invalid;cwd_collapsed" "$(printf '%s' "$row" | cut -f8)"
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+mkdir -p "$tmpdir/bin" "$tmpdir/resurrect"
+printf '%s\n' "$tmpdir/resurrect" > "$tmpdir/resurrect_dir"
+: > "$tmpdir/sessions"
+printf '%s\n' "precious snapshot" > "$tmpdir/resurrect/claude-panes.txt"
+write_save_tmux_stub "$tmpdir/bin/tmux" "$tmpdir"
+write_save_ps_stub "$tmpdir/bin/ps" "$tmpdir"
+run_save_fixture "$tmpdir"
+assert_eq "save_no_clobber_on_empty_preserved" \
+    "precious snapshot" \
+    "$(cat "$tmpdir/resurrect/claude-panes.txt")"
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+mkdir -p "$tmpdir/bin" "$tmpdir/resurrect"
+printf '%s\n' "$tmpdir/resurrect" > "$tmpdir/resurrect_dir"
+: > "$tmpdir/sessions"
+write_save_tmux_stub "$tmpdir/bin/tmux" "$tmpdir"
+write_save_ps_stub "$tmpdir/bin/ps" "$tmpdir"
+run_save_fixture "$tmpdir"
+assert_eq "save_no_empty_clobber_without_existing leaves no snapshot" \
+    "absent" \
+    "$([ -f "$tmpdir/resurrect/claude-panes.txt" ] && echo present || echo absent)"
+partial_count=$(find "$tmpdir/resurrect" -name 'claude-panes.txt.*' -type f | wc -l | tr -d ' ')
+assert_eq "save_no_empty_clobber_without_existing leaves no partial temp" "0" "$partial_count"
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+setup_save_fixture "$tmpdir" claude "$CLAUDE_UUID_SAVE" "$tmpdir/project"
+mkdir -p "$tmpdir/project"
+run_save_fixture "$tmpdir"
+run_restore_fixture "$tmpdir"
+restore_out=$(cat "$tmpdir/restore.out" 2>/dev/null || true)
+restore_log_content=$(cat "$tmpdir/resurrect/restore.log" 2>/dev/null || true)
+assert_not_contains "save_to_restore_e2e_sid_invalid emits no dry-run command" \
+    "[dry-run] 0:1.1:" "$restore_out"
+assert_contains "save_to_restore_e2e_sid_invalid logs skip" \
+    "SKIP 0:1.1 claude sid_invalid" "$restore_log_content"
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+existing_cwd="$tmpdir/project"
+missing_cwd="$existing_cwd/pruned/worktree"
+setup_save_fixture "$tmpdir" codex "$CODEX_UUID_SAVE" "$missing_cwd"
+mkdir -p "$existing_cwd" "$tmpdir/home/.codex/sessions/2026/05/25"
+: > "$tmpdir/home/.codex/sessions/2026/05/25/rollout-2026-05-25T000000-$CODEX_UUID_SAVE.jsonl"
+run_save_fixture "$tmpdir"
+run_restore_fixture "$tmpdir"
+restore_out=$(cat "$tmpdir/restore.out" 2>/dev/null || true)
+restore_log_content=$(cat "$tmpdir/resurrect/restore.log" 2>/dev/null || true)
+assert_contains "save_to_restore_e2e_cwd_collapsed uses collapsed cwd" \
+    "cd '$existing_cwd' 2>/dev/null || cd;" "$restore_out"
+assert_contains "save_to_restore_e2e_cwd_collapsed logs warning" \
+    "WARN 0:1.1 codex cwd_collapsed orig=$missing_cwd new=$existing_cwd" "$restore_log_content"
+rm -rf "$tmpdir"
+
+unset -f write_save_tmux_stub write_save_ps_stub setup_save_fixture run_save_fixture run_restore_fixture
+
+# ============================================================
+echo ""
 echo "=== session-restore: paths with spaces ==="
 # ============================================================
 

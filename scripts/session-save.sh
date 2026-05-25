@@ -1,111 +1,152 @@
 #!/usr/bin/env bash
-# tmux-claude: Post-save hook for tmux-resurrect
-# 1. Prune old resurrect files (keep last N)
-# 2. Record pane→session mapping using tmux pane options set by SessionStart hooks
-#    Falls back to process inspection for sessions started before hooks were installed.
-#
-# Requires SessionStart hooks in Claude Code and Codex that write:
-#   @claude_session_id / @claude_cwd  (Claude)
-#   @codex_session_id  / @codex_cwd   (Codex)
-#
-# Format: session:window.pane|tool|session_id|cwd|window_name
+# tmux-claude: Post-save hook for tmux-resurrect.
 
 set -euo pipefail
 
-RESURRECT_DIR=$(tmux show-option -gqv @resurrect-dir 2>/dev/null)
+CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# shellcheck source=../lib/snapshot.sh
+. "$CURRENT_DIR/lib/snapshot.sh"
+# shellcheck source=../lib/adapters.sh
+. "$CURRENT_DIR/lib/adapters.sh"
+
+RESURRECT_DIR=$(tmux show-option -gqv @resurrect-dir 2>/dev/null || true)
 RESURRECT_DIR="${RESURRECT_DIR:-$HOME/.tmux/resurrect}"
 RESURRECT_DIR="${RESURRECT_DIR/#\~/$HOME}"
 
 PANE_MAP="${RESURRECT_DIR}/claude-panes.txt"
 MAX_SAVES=${TMUX_CLAUDE_MAX_SAVES:-20}
-
-# Serialize concurrent saves (hooks fire in parallel after /clear in multiple panes)
 LOCK_DIR="${RESURRECT_DIR}/.claude-save.lock"
+tmpfile=""
+
+save_cleanup() {
+    [ -n "${tmpfile:-}" ] && rm -f "$tmpfile"
+    rm -rf "$LOCK_DIR"
+}
+
+save_add_flag() {
+    local current="$1"
+    local flag="$2"
+
+    if [ -n "$current" ]; then
+        printf '%s;%s\n' "$current" "$flag"
+    else
+        printf '%s\n' "$flag"
+    fi
+}
+
+save_collapse_cwd() {
+    local cwd="$1"
+    local parent
+
+    [ -n "$cwd" ] || return 1
+    while [ "$cwd" != "/" ] && [ ! -d "$cwd" ]; do
+        case "$cwd" in
+            */*)
+                parent="${cwd%/*}"
+                [ "$parent" != "$cwd" ] || parent="/"
+                [ -n "$parent" ] || parent="/"
+                cwd="$parent"
+                ;;
+            *)
+                cwd="/"
+                ;;
+        esac
+    done
+    [ -d "$cwd" ] || return 1
+    printf '%s\n' "$cwd"
+}
+
+save_detect_field() {
+    local row="$1"
+    local field="$2"
+    printf '%s\n' "$row" | awk -F '\t' -v field="$field" 'NR == 1 { print $field }'
+}
+
+mkdir -p "$RESURRECT_DIR"
+
 _attempts=0
 while ! mkdir "$LOCK_DIR" 2>/dev/null; do
     _attempts=$((_attempts + 1))
-    [ $_attempts -ge 10 ] && exit 0
+    [ "$_attempts" -ge 10 ] && exit 0
     sleep 0.5
 done
-# --- Prune old saves ---
+trap save_cleanup EXIT HUP INT TERM
+
 if [ -d "$RESURRECT_DIR" ]; then
     (cd "$RESURRECT_DIR" && ls -t tmux_resurrect_*.txt 2>/dev/null | tail -n +$((MAX_SAVES + 1)) | xargs rm -f 2>/dev/null) || true
 fi
 
-# --- Build mapping (atomic: write temp, mv on success) ---
-tmpfile=$(mktemp "${PANE_MAP}.XXXXXX")
-trap 'rm -rf "$LOCK_DIR"; rm -f "$tmpfile"' EXIT
+adapters_load "$CURRENT_DIR"
 
-echo "# Claude/Codex session mapping — $(date)" > "$tmpfile"
-echo "# Format: session:window.pane|tool|session_id|cwd|window_name" >> "$tmpfile"
+tmpfile=$(mktemp "${PANE_MAP}.XXXXXX")
+snapshot_write_header > "$tmpfile"
 
 pane_count=0
 
-while IFS= read -r session; do
-    for win in $(tmux list-windows -t "$session" -F '#{window_index}' 2>/dev/null); do
-        wname=$(tmux display-message -p -t "$session:$win" '#{window_name}')
-        for pane in $(tmux list-panes -t "$session:$win" -F '#{pane_index}' 2>/dev/null); do
+while IFS= read -r session || [ -n "$session" ]; do
+    [ -n "$session" ] || continue
+
+    while IFS= read -r win || [ -n "$win" ]; do
+        [ -n "$win" ] || continue
+
+        while IFS= read -r pane || [ -n "$pane" ]; do
+            [ -n "$pane" ] || continue
+
             target="$session:$win.$pane"
-            cmd=$(tmux display-message -p -t "$target" '#{pane_current_command}')
-            dir=$(tmux display-message -p -t "$target" '#{pane_current_path}')
-
-            claude_sid=$(tmux show-options -p -t "$target" -v @claude_session_id 2>/dev/null || true)
-            claude_cwd=$(tmux show-options -p -t "$target" -v @claude_cwd 2>/dev/null || true)
-            codex_sid=$(tmux show-options -p -t "$target" -v @codex_session_id 2>/dev/null || true)
-            codex_cwd=$(tmux show-options -p -t "$target" -v @codex_cwd 2>/dev/null || true)
-
-            tool=""
-            sid=""
-
-            if [ -n "$claude_sid" ]; then
-                tool="claude"
-                sid="$claude_sid"
-            elif [ -n "$codex_sid" ]; then
-                tool="codex"
-                sid="$codex_sid"
-            elif echo "$cmd" | grep -q 'codex'; then
-                tool="codex"
-                sid="picker"
-            elif echo "$cmd" | grep -q 'nvim\|vim'; then
-                tool="nvim"
-                sid=""
-            elif echo "$cmd" | grep -q 'just'; then
-                pid=$(tmux display-message -p -t "$target" '#{pane_pid}')
-                child_cmd=$(ps -o command= -p $(pgrep -P "$pid" 2>/dev/null | head -1) 2>/dev/null | head -1 || true)
-                if echo "$child_cmd" | grep -q 'just'; then
-                    tool="just"
-                    sid=$(echo "$child_cmd" | sed 's/.*just //' | head -c 50)
+            detect_row=""
+            for adapter in $(adapters_list); do
+                detect_fn="${adapter}_detect"
+                if declare -F "$detect_fn" >/dev/null 2>&1 &&
+                    detect_row=$("$detect_fn" "$target" 2>/dev/null); then
+                    [ -n "$detect_row" ] && break
                 fi
-            else
-                pid=$(tmux display-message -p -t "$target" '#{pane_pid}')
-                child_cmd=$(ps -o command= -p $(pgrep -P "$pid" 2>/dev/null | head -1) 2>/dev/null || true)
-                if echo "$child_cmd" | grep -q 'claude'; then
-                    tool="claude"
-                    sid=$(echo "$child_cmd" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1 || true)
-                    [ -z "$sid" ] && sid="picker"
+                detect_row=""
+            done
+            [ -n "$detect_row" ] || continue
+
+            tool=$(save_detect_field "$detect_row" 1)
+            sid=$(save_detect_field "$detect_row" 2)
+            sid_kind=$(save_detect_field "$detect_row" 3)
+            cwd=$(save_detect_field "$detect_row" 4)
+            if [ -z "$cwd" ]; then
+                cwd=$(tmux display-message -p -t "$target" '#{pane_current_path}' 2>/dev/null || true)
+            fi
+            wname=$(tmux display-message -p -t "$target" '#{window_name}' 2>/dev/null || true)
+
+            original_cwd=""
+            flags=""
+
+            if [ "$sid_kind" = "uuid" ]; then
+                validate_fn="${tool}_validate"
+                if ! declare -F "$validate_fn" >/dev/null 2>&1 ||
+                    ! "$validate_fn" "$sid" "$sid_kind" >/dev/null 2>&1; then
+                    sid="-"
+                    sid_kind="none"
+                    flags=$(save_add_flag "$flags" sid_invalid)
                 fi
             fi
 
-            [ -z "$tool" ] && continue
+            if [ -n "$cwd" ] && [ ! -d "$cwd" ]; then
+                original_cwd="$cwd"
+                collapsed_cwd=$(save_collapse_cwd "$cwd" 2>/dev/null || true)
+                if [ -n "$collapsed_cwd" ]; then
+                    cwd="$collapsed_cwd"
+                fi
+                flags=$(save_add_flag "$flags" cwd_collapsed)
+            fi
 
-            case "$tool" in
-                claude) use_dir="${claude_cwd:-$dir}" ;;
-                codex)  use_dir="${codex_cwd:-$dir}" ;;
-                *)      use_dir="$dir" ;;
-            esac
-            echo "$target|$tool|${sid:-picker}|$use_dir|$wname" >> "$tmpfile"
+            snapshot_write_row "$target" "$tool" "$sid" "$sid_kind" "$cwd" "$original_cwd" "$wname" "$flags" >> "$tmpfile"
             pane_count=$((pane_count + 1))
-        done
-    done
-done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null)
+        done < <(tmux list-panes -t "$session:$win" -F '#{pane_index}' 2>/dev/null || true)
+    done < <(tmux list-windows -t "$session" -F '#{window_index}' 2>/dev/null || true)
+done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
 
-if [ "$pane_count" -eq 0 ] && [ -f "$PANE_MAP" ]; then
+if [ "$pane_count" -eq 0 ]; then
     rm -f "$tmpfile"
-    rm -rf "$LOCK_DIR"
-    trap - EXIT
+    tmpfile=""
     exit 0
 fi
 
 mv "$tmpfile" "$PANE_MAP"
-rm -rf "$LOCK_DIR"
-trap - EXIT
+tmpfile=""
