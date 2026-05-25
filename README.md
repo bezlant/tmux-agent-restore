@@ -72,7 +72,15 @@ Automatically saves which panes run Claude/Codex/nvim/just and restores them aft
 1. `prefix + S` (resurrect save) triggers the post-save hook which records all pane→session mappings
 2. `prefix + R` (resurrect restore) triggers the post-restore hook which sends resume commands to each pane
 
-**Mapping format:** `session:window.pane|tool|session_id|cwd|window_name`
+**Mapping format:** `~/.config/tmux/resurrect/claude-panes.txt` uses `snapshot v2`, an eight-column TSV format:
+
+```text
+target    tool    sid    sid_kind    cwd    original_cwd    wname    flags
+```
+
+Legacy pipe-delimited snapshots are still readable during restore.
+
+Restore writes `restore.log` beside the snapshot with `BEGIN`, `OK`, `WARN`, `SKIP`, and `END` lines so failed or degraded panes can be inspected after restore.
 
 **Tools supported:**
 - `claude` → `ccy --resume <uuid>` (direct resume, no picker)
@@ -97,6 +105,18 @@ bash ~/.config/tmux/plugins/tmux-claude/scripts/session-restore.sh --dry-run
 # Restore
 bash ~/.config/tmux/plugins/tmux-claude/scripts/session-restore.sh
 ```
+
+### Post-reboot attach helper
+
+For fish users, the plugin can install a `tres` helper:
+
+```fish
+tres
+```
+
+`tres` starts a temporary bootstrap tmux server when needed, reads the saved tmux-resurrect session name from `~/.config/tmux/resurrect/last`, waits for the restored window count to stabilize, then attaches to that restored session. It falls back to session `0` when no snapshot is available.
+
+If `@resurrect-dir` is set, `tres` reads `last` from that configured directory. If you already have a custom `~/.config/fish/functions/tres.fish`, the plugin will not overwrite it; copy `shell/tres.fish` manually if you want the plugin helper.
 
 **Prunes old resurrect files** — keeps the last 20 saves by default:
 

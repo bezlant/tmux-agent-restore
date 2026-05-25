@@ -3732,6 +3732,16 @@ fi
 
 # ============================================================
 echo ""
+echo "=== README: tres and v2 snapshot docs ==="
+# ============================================================
+
+readme_content=$(cat "$PLUGIN_DIR/README.md")
+assert_contains "README documents tres helper" "tres" "$readme_content"
+assert_contains "README documents v2 snapshot format" "snapshot v2" "$readme_content"
+assert_contains "README documents restore.log observability" "restore.log" "$readme_content"
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
