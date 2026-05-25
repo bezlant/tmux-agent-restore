@@ -509,6 +509,9 @@ case "${1:-}" in
             *"#{pane_current_command}"*)
                 printf '%s\n' "${TMUX_STUB_PANE_COMMAND:-fish}"
                 ;;
+            *"#{pane_pid}"*)
+                printf '%s\n' "${TMUX_STUB_PANE_PID:-100}"
+                ;;
             *)
                 exit 1
                 ;;
@@ -614,7 +617,92 @@ else
     rm -rf "$tmpdir"
 fi
 
+write_real_hook_ps_stub() {
+    local ps_path="$1"
+    local fixture_dir="$2"
+
+    cat > "$ps_path" <<EOF
+#!/usr/bin/env bash
+fixture_dir='$fixture_dir'
+if [ "\$1" = "-axww" ] && [ "\$2" = "-o" ] && [ "\$3" = "pid=,ppid=,command=" ]; then
+    cat "\$fixture_dir/ps_tree"
+elif [ "\$1" = "-p" ] && [ "\$3" = "-o" ] && [ "\$4" = "ppid=" ]; then
+    case "\$2" in
+        100) printf '%s\n' 1 ;;
+        200) printf '%s\n' 100 ;;
+        300) printf '%s\n' 200 ;;
+        *) exit 1 ;;
+    esac
+elif [ "\$1" = "-p" ] && [ "\$3" = "-o" ] && [ "\$4" = "command=" ]; then
+    case "\$2" in
+        100) printf '%s\n' fish ;;
+        200) cat "\$fixture_dir/ps_command_200" ;;
+        300) cat "\$fixture_dir/ps_command_300" ;;
+        *) exit 1 ;;
+    esac
+else
+    exit 1
+fi
+EOF
+    chmod +x "$ps_path"
+}
+
+setup_real_hook_fixture() {
+    local tmpdir="$1"
+    local tool="$2"
+    local hook_script="$3"
+
+    mkdir -p "$tmpdir/home" "$tmpdir/bin" "$tmpdir/plugin/lib"
+    write_hook_tmux_stub "$tmpdir/bin/tmux"
+    cp "$PLUGIN_DIR/lib/process.sh" "$tmpdir/plugin/lib/process.sh"
+    printf '%s\n' " 100     1 fish" > "$tmpdir/ps_tree"
+    printf ' 200   100 %s --resume real-session\n' "$tool" >> "$tmpdir/ps_tree"
+    printf ' 300   200 bash %s\n' "$hook_script" >> "$tmpdir/ps_tree"
+    printf '%s --resume real-session\n' "$tool" > "$tmpdir/ps_command_200"
+    printf 'bash %s\n' "$hook_script" > "$tmpdir/ps_command_300"
+    write_real_hook_ps_stub "$tmpdir/bin/ps" "$tmpdir"
+}
+
+if [ ! -f "$CLAUDE_HOOK" ]; then
+    echo "  WARN: Claude SessionStart hook missing at $CLAUDE_HOOK; skipping real helper hook integration test"
+else
+    tmpdir=$(mktemp -d)
+    setup_real_hook_fixture "$tmpdir" claude "$CLAUDE_HOOK"
+    claude_cwd="$tmpdir/claude-real-cwd"
+    run_hook_fixture "$CLAUDE_HOOK" "$tmpdir" "claude-real-session" "$claude_cwd"
+    hook_rc=$?
+    hook_log=$(cat "$tmpdir/tmux.log" 2>/dev/null || true)
+
+    assert_eq "Claude real helper hook process test exits 0" "0" "$hook_rc"
+    assert_contains "Claude real helper stamps real agent pid 200" \
+        "set-option -p -t %1 @claude_session_pid 200" "$hook_log"
+    assert_not_contains "Claude real helper rejects hook process pid 300" \
+        "@claude_session_pid 300" "$hook_log"
+
+    rm -rf "$tmpdir"
+fi
+
+if [ ! -f "$CODEX_HOOK" ]; then
+    echo "  WARN: Codex SessionStart hook missing at $CODEX_HOOK; skipping real helper hook integration test"
+else
+    tmpdir=$(mktemp -d)
+    setup_real_hook_fixture "$tmpdir" codex "$CODEX_HOOK"
+    codex_cwd="$tmpdir/codex-real-cwd"
+    run_hook_fixture "$CODEX_HOOK" "$tmpdir" "codex-real-session" "$codex_cwd"
+    hook_rc=$?
+    hook_log=$(cat "$tmpdir/tmux.log" 2>/dev/null || true)
+
+    assert_eq "Codex real helper hook process test exits 0" "0" "$hook_rc"
+    assert_contains "Codex real helper stamps real agent pid 200" \
+        "set-option -p -t %1 @codex_session_pid 200" "$hook_log"
+    assert_not_contains "Codex real helper rejects hook process pid 300" \
+        "@codex_session_pid 300" "$hook_log"
+
+    rm -rf "$tmpdir"
+fi
+
 unset -f write_hook_tmux_stub setup_hook_fixture run_hook_fixture
+unset -f write_real_hook_ps_stub setup_real_hook_fixture
 
 # ============================================================
 echo ""
