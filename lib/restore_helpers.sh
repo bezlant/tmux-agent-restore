@@ -24,7 +24,7 @@ restore_make_display_name() {
         session_name="$use_wname"
     fi
 
-    session_name=$(printf '%s' "$session_name" | sed 's/[^A-Za-z0-9_.:-]/-/g')
+    session_name=$(printf '%s' "$session_name" | LC_ALL=C tr -c 'A-Za-z0-9_.:-' '-')
     printf '%s\n' "$session_name"
 }
 
@@ -50,9 +50,59 @@ restore_flag_has() {
     return 1
 }
 
+restore_value_has_control() {
+    local value="$1"
+    case "$value" in
+        *$'\n'*|*$'\r'*|*$'\t'*) return 0 ;;
+    esac
+    printf '%s' "$value" | LC_ALL=C grep -q '[[:cntrl:]]'
+}
+
+restore_sid_valid() {
+    local sid="$1"
+    local sid_kind="$2"
+
+    if restore_value_has_control "$sid"; then
+        return 1
+    fi
+
+    case "$sid_kind" in
+        uuid)
+            printf '%s' "$sid" | LC_ALL=C grep -Eq '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$'
+            ;;
+        picker)
+            [ "$sid" = "picker" ]
+            ;;
+        none)
+            [ "$sid" = "-" ]
+            ;;
+        recipe)
+            [ -n "$sid" ]
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+restore_marker_printf_format() {
+    local marker="$1"
+    local byte fmt=""
+
+    while IFS= read -r byte; do
+        [ -n "$byte" ] || continue
+        fmt="$fmt\\$(printf '%03o' "$byte")"
+    done <<EOF
+$(printf '%s' "$marker" | od -An -v -t u1 | tr ' ' '\n')
+EOF
+
+    [ -n "$fmt" ] || return 1
+    printf '%s\\n' "$fmt"
+}
+
 wait_for_prompt() {
     local target="$1"
-    local fg_cmd marker attempts max_attempts sleep_seconds
+    local fg_cmd marker marker_format attempts max_attempts sleep_seconds
 
     fg_cmd=$(tmux display-message -p -t "$target" '#{pane_current_command}' 2>/dev/null || true)
     case "$fg_cmd" in
@@ -67,16 +117,21 @@ wait_for_prompt() {
     else
         marker="__tcready_$$_${RANDOM}_${RANDOM}_$(date +%s)__"
     fi
-    if tmux capture-pane -p -t "$target" -S - -E - 2>/dev/null | grep -qF "$marker"; then
+    case "$marker" in
+        ""|*[!A-Za-z0-9_:-]*) return 1 ;;
+    esac
+
+    if tmux capture-pane -p -t "$target" -S - -E - 2>/dev/null | grep -Fxq -- "$marker"; then
         return 1
     fi
-    tmux send-keys -t "$target" "printf '%s\n' $marker" Enter 2>/dev/null || return 1
+    marker_format=$(restore_marker_printf_format "$marker") || return 1
+    tmux send-keys -t "$target" "printf '$marker_format'" Enter 2>/dev/null || return 1
 
     max_attempts="${TMUX_CLAUDE_PROMPT_ATTEMPTS:-20}"
     sleep_seconds="${TMUX_CLAUDE_PROMPT_SLEEP:-0.1}"
     attempts=0
     while [ "$attempts" -lt "$max_attempts" ]; do
-        if tmux capture-pane -p -t "$target" -S - -E - 2>/dev/null | grep -qF "$marker"; then
+        if tmux capture-pane -p -t "$target" -S - -E - 2>/dev/null | grep -Fxq -- "$marker"; then
             return 0
         fi
         sleep "$sleep_seconds"

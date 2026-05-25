@@ -1920,6 +1920,13 @@ assert_eq "quote_argv empty argv fails" \
     "1" \
     "$(shell_quote_argv sh "" >/dev/null; echo $?)"
 
+quote_file_tmp=$(mktemp "${TMPDIR:-/tmp}/tmux-claude-argv-file.XXXXXX")
+printf 'cmd\n\n' > "$quote_file_tmp"
+assert_eq "quote_argv_file preserves final empty word" \
+    "'cmd' ''" \
+    "$(shell_quote_argv_file sh "$quote_file_tmp")"
+rm -f "$quote_file_tmp"
+
 rm -rf "$danger_dir"
 
 # ============================================================
@@ -2082,8 +2089,14 @@ tmux() {
         capture-pane)
             if [ "${MOCK_CAPTURE_AFTER_SEND:-}" = "1" ] && \
                 [ -f "$MOCK_TMUX_LOG" ] && \
-                grep -qF "send-keys -t %1 printf '%s\\n' __tcready_forced__ Enter" "$MOCK_TMUX_LOG"; then
-                printf '%s\n' "ready __tcready_forced__"
+                grep -qF "send-keys -t %1 printf '" "$MOCK_TMUX_LOG"; then
+                printf '%s\n' "__tcready_forced__"
+                return 0
+            fi
+            if [ "${MOCK_CAPTURE_AFTER_SEND:-}" = "continuation" ] && \
+                [ -f "$MOCK_TMUX_LOG" ] && \
+                grep -qF "send-keys -t %1 printf '" "$MOCK_TMUX_LOG"; then
+                printf 'CONT> printf %%s\\\\n %s\n' "${TMUX_CLAUDE_READY_MARKER:-}"
                 return 0
             fi
             printf '%s\n' "$MOCK_CAPTURE"
@@ -2108,6 +2121,11 @@ assert_eq "restore_make_display_name sanitizes metacharacters" \
     "bad-rm--rf--.2" \
     "$(restore_make_display_name "bad;rm -rf /" "0:3.2")"
 
+newline_wname=$(printf 'good\n--resume\nevil')
+assert_eq "restore_make_display_name sanitizes embedded newlines" \
+    "good---resume-evil.2" \
+    "$(restore_make_display_name "$newline_wname" "0:3.2")"
+
 assert_eq "restore_flag_has finds exact semicolon-separated flag" \
     "0" \
     "$(restore_flag_has "sid_invalid;cwd_collapsed" "cwd_collapsed"; echo $?)"
@@ -2115,6 +2133,36 @@ assert_eq "restore_flag_has finds exact semicolon-separated flag" \
 assert_eq "restore_flag_has rejects substring flag match" \
     "1" \
     "$(restore_flag_has "not_sid_invalid" "sid_invalid"; echo $?)"
+
+assert_eq "restore_sid_valid accepts uuid" \
+    "0" \
+    "$(restore_sid_valid "0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf" uuid; echo $?)"
+
+sid_with_newline=$(printf '0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\n--dangerously-skip-permissions')
+assert_eq "restore_sid_valid rejects uuid with newline" \
+    "1" \
+    "$(restore_sid_valid "$sid_with_newline" uuid; echo $?)"
+
+assert_eq "restore_sid_valid accepts picker sentinel" \
+    "0" \
+    "$(restore_sid_valid picker picker; echo $?)"
+
+assert_eq "restore_sid_valid rejects picker with extra text" \
+    "1" \
+    "$(restore_sid_valid "picker --danger" picker; echo $?)"
+
+assert_eq "restore_sid_valid accepts spaced recipe" \
+    "0" \
+    "$(restore_sid_valid "dev server" recipe; echo $?)"
+
+recipe_with_newline=$(printf 'dev\n--danger')
+assert_eq "restore_sid_valid rejects recipe with newline" \
+    "1" \
+    "$(restore_sid_valid "$recipe_with_newline" recipe; echo $?)"
+
+assert_eq "restore_sid_valid accepts none sentinel" \
+    "0" \
+    "$(restore_sid_valid "-" none; echo $?)"
 
 MOCK_PANE_COMMAND=claude
 assert_eq "wait_for_prompt returns nonzero for non-shell foreground" \
@@ -2128,8 +2176,11 @@ TMUX_CLAUDE_READY_MARKER="__tcready_forced__"
 assert_eq "wait_for_prompt succeeds when marker appears" \
     "0" \
     "$(wait_for_prompt "%1"; echo $?)"
-assert_contains "wait_for_prompt sends printf marker" \
-    "send-keys -t %1 printf '%s\\n' __tcready_forced__ Enter" \
+assert_contains "wait_for_prompt sends encoded printf marker" \
+    "send-keys -t %1 printf '" \
+    "$(cat "$MOCK_TMUX_LOG")"
+assert_not_contains "wait_for_prompt probe does not type literal marker" \
+    "__tcready_forced__" \
     "$(cat "$MOCK_TMUX_LOG")"
 
 unset TMUX_CLAUDE_READY_MARKER
@@ -2154,6 +2205,34 @@ TMUX_CLAUDE_PROMPT_SLEEP=0
 assert_eq "wait_for_prompt rejects same-marker stale scrollback" \
     "1" \
     "$(wait_for_prompt "%1"; echo $?)"
+unset TMUX_CLAUDE_READY_MARKER
+unset TMUX_CLAUDE_PROMPT_ATTEMPTS
+unset TMUX_CLAUDE_PROMPT_SLEEP
+
+MOCK_CAPTURE=""
+MOCK_CAPTURE_AFTER_SEND=continuation
+TMUX_CLAUDE_READY_MARKER="__tcready_cont__"
+TMUX_CLAUDE_PROMPT_ATTEMPTS=1
+TMUX_CLAUDE_PROMPT_SLEEP=0
+assert_eq "wait_for_prompt rejects continuation prompt echoed marker" \
+    "1" \
+    "$(wait_for_prompt "%1"; echo $?)"
+unset MOCK_CAPTURE_AFTER_SEND
+unset TMUX_CLAUDE_READY_MARKER
+unset TMUX_CLAUDE_PROMPT_ATTEMPTS
+unset TMUX_CLAUDE_PROMPT_SLEEP
+
+rm -f "$MOCK_TMUX_LOG"
+MOCK_CAPTURE=""
+TMUX_CLAUDE_READY_MARKER="bad;touch"
+TMUX_CLAUDE_PROMPT_ATTEMPTS=1
+TMUX_CLAUDE_PROMPT_SLEEP=0
+assert_eq "wait_for_prompt rejects unsafe marker override" \
+    "1" \
+    "$(wait_for_prompt "%1"; echo $?)"
+assert_eq "wait_for_prompt does not send unsafe marker override" \
+    "absent" \
+    "$([ -f "$MOCK_TMUX_LOG" ] && echo present || echo absent)"
 unset TMUX_CLAUDE_READY_MARKER
 unset TMUX_CLAUDE_PROMPT_ATTEMPTS
 unset TMUX_CLAUDE_PROMPT_SLEEP
@@ -2351,7 +2430,64 @@ mkdir -p "$tmpbin" "$resurrect_dir"
 {
     printf '# tmux-claude snapshot v2\n'
     printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
-    printf '0:8.1\tjust\tdev\tnone\t/repo/bad\t\tbad-just\t\n'
+    printf '0:7.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf%%0A--dangerously-skip-permissions\tuuid\t/repo/v2\t\twin\t\n'
+} > "$resurrect_dir/claude-panes.txt"
+write_restore_tmux_stub "$tmpbin/tmux" "$resurrect_dir" "$send_keys_log"
+
+ORIG_PATH="$PATH"
+PATH="$tmpbin:$PATH"
+out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+rc=$?
+PATH="$ORIG_PATH"
+restore_log_content=$(cat "$resurrect_dir/restore.log" 2>/dev/null || true)
+
+assert_eq "restore v2 newline sid exits 0" "0" "$rc"
+assert_not_contains "restore v2 newline sid does not emit injected argv" \
+    "--dangerously-skip-permissions" \
+    "$out"
+assert_contains "restore v2 newline sid logs invalid sid skip" \
+    "SKIP 0:7.1 claude invalid_sid" \
+    "$restore_log_content"
+
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+resurrect_dir="$tmpdir/resurrect"
+send_keys_log="$tmpdir/send-keys.log"
+mkdir -p "$tmpbin" "$resurrect_dir"
+{
+    printf '# tmux-claude snapshot v2\n'
+    printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
+    printf '0:7.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/v2\t\tgood%%0A--resume%%0Aevil\t\n'
+} > "$resurrect_dir/claude-panes.txt"
+write_restore_tmux_stub "$tmpbin/tmux" "$resurrect_dir" "$send_keys_log"
+
+ORIG_PATH="$PATH"
+PATH="$tmpbin:$PATH"
+out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+rc=$?
+PATH="$ORIG_PATH"
+
+assert_eq "restore v2 newline wname exits 0" "0" "$rc"
+assert_contains "restore v2 newline wname stays single name argv" \
+    "'--name' 'good---resume-evil' '--resume' '0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf'" \
+    "$out"
+assert_not_contains "restore v2 newline wname does not inject resume argv" \
+    "'--name' 'good' '--resume' 'evil'" \
+    "$out"
+
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+resurrect_dir="$tmpdir/resurrect"
+send_keys_log="$tmpdir/send-keys.log"
+mkdir -p "$tmpbin" "$resurrect_dir"
+{
+    printf '# tmux-claude snapshot v2\n'
+    printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
+    printf '0:8.1\tjust\t-\tnone\t/repo/bad\t\tbad-just\t\n'
     printf '0:9.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/good\t\tgood claude\t\n'
 } > "$resurrect_dir/claude-panes.txt"
 write_restore_tmux_stub "$tmpbin/tmux" "$resurrect_dir" "$send_keys_log"
@@ -2489,7 +2625,7 @@ case "\$1" in
         ;;
     capture-pane)
         if [ -f "$tmpdir/send-keys.log" ] && \
-            grep -qF "printf '%s\\n' __tcready_forced__" "$tmpdir/send-keys.log"; then
+            grep -qF "printf '" "$tmpdir/send-keys.log"; then
             printf '%s\n' "__tcready_forced__"
         fi
         ;;
@@ -2515,13 +2651,15 @@ restore_log_content=$(cat "$resurrect_dir/restore.log")
 assert_eq "restore live exits 0 despite one busy pane" "0" "$rc"
 assert_contains "restore live logs prompt wait skip for busy pane" \
     "SKIP 0:1.1 claude prompt_wait_timeout" "$restore_log_content"
-assert_contains "restore live waits with marker before sending restore command" \
-    "printf '%s\\n' __tcready_forced__" "$send_log"
+assert_contains "restore live waits with encoded marker before sending restore command" \
+    "printf '" "$send_log"
+assert_not_contains "restore live wait probe does not type literal marker" \
+    "__tcready_forced__" "$send_log"
 assert_not_contains "restore live does not send busy pane restore command" \
     "'ccy' '--name' 'one' '--resume' '0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf'" "$send_log"
 assert_contains "restore live sends second pane command after marker" \
     "'cxy' 'resume' '019dd3be-9166-7750-8039-a1f9ecdad1f3'" "$send_log"
-marker_line=$(printf '%s\n' "$send_log" | grep -nF "printf '%s\\n' __tcready_forced__" | sed -n '1p' | cut -d: -f1)
+marker_line=$(printf '%s\n' "$send_log" | grep -nF "printf '" | sed -n '1p' | cut -d: -f1)
 restore_line=$(printf '%s\n' "$send_log" | grep -nF "'cxy' 'resume' '019dd3be-9166-7750-8039-a1f9ecdad1f3'" | sed -n '1p' | cut -d: -f1)
 marker_order="marker_order_failed marker=$marker_line restore=$restore_line"
 if [ -n "$marker_line" ] && [ -n "$restore_line" ] && [ "$marker_line" -lt "$restore_line" ]; then

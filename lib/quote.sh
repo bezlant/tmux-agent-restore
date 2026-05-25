@@ -48,3 +48,23 @@ EOF
     [ "$first" -eq 0 ] || return 1
     printf '%s' "$out"
 }
+
+shell_quote_argv_file() {
+    local shell="$1"
+    local argv_file="$2"
+    local word first=1 out=""
+
+    [ -f "$argv_file" ] || return 1
+
+    while IFS= read -r word || [ -n "$word" ]; do
+        if [ "$first" -eq 1 ]; then
+            out="$(shell_quote_word "$shell" "$word")"
+            first=0
+        else
+            out="$out $(shell_quote_word "$shell" "$word")"
+        fi
+    done < "$argv_file"
+
+    [ "$first" -eq 0 ] || return 1
+    printf '%s' "$out"
+}

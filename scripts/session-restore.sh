@@ -35,8 +35,9 @@ DRY_RUN=false
 [ -s "$PANE_MAP" ] || exit 0
 
 snapshot_tmp=$(mktemp "${TMPDIR:-/tmp}/tmux-claude-snapshot.XXXXXX")
+argv_tmp=$(mktemp "${TMPDIR:-/tmp}/tmux-claude-argv.XXXXXX")
 cleanup() {
-    rm -f "$snapshot_tmp"
+    rm -f "$snapshot_tmp" "$argv_tmp"
     restore_log_close
 }
 trap cleanup EXIT HUP INT TERM
@@ -103,6 +104,11 @@ while IFS= read -r row || [ -n "$row" ]; do
         restore_log SKIP "$target $tool sid_invalid"
         continue
     fi
+    if ! restore_sid_valid "$sid" "$sid_kind"; then
+        skip=$((skip + 1))
+        restore_log SKIP "$target $tool invalid_sid"
+        continue
+    fi
 
     restore_fn="${tool}_restore_argv"
     if ! declare -F "$restore_fn" >/dev/null 2>&1; then
@@ -112,7 +118,8 @@ while IFS= read -r row || [ -n "$row" ]; do
     fi
 
     display_name=$(restore_make_display_name "$wname" "$target")
-    if ! argv=$("$restore_fn" "$sid" "$sid_kind" "$cwd" "$display_name"); then
+    : > "$argv_tmp"
+    if ! "$restore_fn" "$sid" "$sid_kind" "$cwd" "$display_name" > "$argv_tmp" 2>/dev/null; then
         skip=$((skip + 1))
         restore_log SKIP "$target $tool adapter_error"
         continue
@@ -124,7 +131,7 @@ while IFS= read -r row || [ -n "$row" ]; do
         *) pane_shell="sh" ;;
     esac
 
-    if ! cmd=$(shell_quote_argv "$pane_shell" "$argv"); then
+    if ! cmd=$(shell_quote_argv_file "$pane_shell" "$argv_tmp"); then
         skip=$((skip + 1))
         restore_log SKIP "target=$target tool=$tool quote_argv_failed"
         continue
