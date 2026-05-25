@@ -1286,13 +1286,16 @@ echo ""
 echo "=== lib/snapshot: smoke test against live claude-panes.txt ==="
 # ============================================================
 
-real_snapshot="$HOME/.config/tmux/resurrect/claude-panes.txt"
-
-if [ ! -f "$real_snapshot" ]; then
+if [ -z "${HOME+x}" ]; then
+    echo "  (smoke: HOME unset, skipping live snapshot)"
+elif [ ! -f "$HOME/.config/tmux/resurrect/claude-panes.txt" ]; then
+    real_snapshot="$HOME/.config/tmux/resurrect/claude-panes.txt"
     echo "  (smoke: no live snapshot at $real_snapshot, skipping)"
-elif [ ! -s "$real_snapshot" ]; then
+elif [ ! -s "$HOME/.config/tmux/resurrect/claude-panes.txt" ]; then
+    real_snapshot="$HOME/.config/tmux/resurrect/claude-panes.txt"
     echo "  (smoke: live snapshot is zero-byte, skipping)"
 else
+    real_snapshot="$HOME/.config/tmux/resurrect/claude-panes.txt"
     tmpdir=$(mktemp -d)
     snapshot_version=$(snapshot_detect_version "$real_snapshot")
     rows=$(snapshot_read "$real_snapshot" 2>"$tmpdir/smoke.err"); rc=$?
@@ -1843,9 +1846,31 @@ echo "=== adapters: uuid artifact validation ==="
 # ============================================================
 
 tmpdir=$(mktemp -d)
-old_home="${HOME:-}"
+old_home_set="${HOME+x}"
+old_home="${HOME-}"
+restore_home() {
+    if [ -n "$old_home_set" ]; then
+        HOME="$old_home"
+    else
+        unset HOME
+    fi
+}
 
 CLAUDE_UUID=0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf
+claude_unset_home_output=$(env -u HOME bash -uo pipefail -c '
+    plugin_dir="$1"
+    sid="$2"
+    . "$plugin_dir/adapters/10-claude.sh"
+    claude_validate "$sid" uuid
+' _ "$PLUGIN_DIR" "$CLAUDE_UUID" 2>&1)
+claude_unset_home_status=$?
+assert_eq "claude_validate uuid with HOME unset returns nonzero" \
+    "nonzero" \
+    "$([ "$claude_unset_home_status" -ne 0 ] && printf nonzero || printf zero)"
+assert_not_contains "claude_validate uuid with HOME unset does not crash on unbound HOME" \
+    "unbound variable" \
+    "$claude_unset_home_output"
+
 tmp_home="$tmpdir/claude-home"
 mkdir -p "$tmp_home"
 HOME="$tmp_home"
@@ -1860,9 +1885,23 @@ assert_eq "claude_validate uuid present jsonl returns zero" \
 assert_eq "claude_validate invalid uuid string returns nonzero" \
     "1" \
     "$(claude_validate not-a-uuid uuid; echo $?)"
-HOME="$old_home"
+restore_home
 
 CODEX_UUID=019dd3be-9166-7750-8039-a1f9ecdad1f3
+codex_unset_home_output=$(env -u HOME bash -uo pipefail -c '
+    plugin_dir="$1"
+    sid="$2"
+    . "$plugin_dir/adapters/20-codex.sh"
+    codex_validate "$sid" uuid
+' _ "$PLUGIN_DIR" "$CODEX_UUID" 2>&1)
+codex_unset_home_status=$?
+assert_eq "codex_validate uuid with HOME unset returns nonzero" \
+    "nonzero" \
+    "$([ "$codex_unset_home_status" -ne 0 ] && printf nonzero || printf zero)"
+assert_not_contains "codex_validate uuid with HOME unset does not crash on unbound HOME" \
+    "unbound variable" \
+    "$codex_unset_home_output"
+
 tmp_home="$tmpdir/codex-home"
 mkdir -p "$tmp_home"
 HOME="$tmp_home"
@@ -1877,7 +1916,7 @@ assert_eq "codex_validate uuid present rollout jsonl returns zero" \
 assert_eq "codex_validate invalid uuid string returns nonzero" \
     "1" \
     "$(codex_validate not-a-uuid uuid; echo $?)"
-HOME="$old_home"
+restore_home
 
 tmp_home="$tmpdir/non-uuid-home"
 mkdir -p "$tmp_home"
@@ -1894,9 +1933,10 @@ assert_eq "codex_validate picker returns zero without artifacts" \
 assert_eq "codex_validate none returns zero without artifacts" \
     "0" \
     "$(codex_validate - none; echo $?)"
-HOME="$old_home"
+restore_home
 
 rm -rf "$tmpdir"
+unset -f restore_home
 
 # ============================================================
 echo ""

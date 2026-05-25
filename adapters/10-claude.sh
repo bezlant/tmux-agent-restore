@@ -15,11 +15,13 @@ claude_detect() {
 claude_validate() {
     local sid="$1"
     local sid_kind="$2"
+    local home="${HOME:-}"
 
     [ "$sid_kind" = "uuid" ] || return 0
     printf '%s' "$sid" | LC_ALL=C grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' || return 1
+    [ -n "$home" ] || return 1
 
-    find "${HOME}/.claude/projects" \
+    find "$home/.claude/projects" \
         -type f \
         -name "${sid}.jsonl" \
         -print -quit 2>/dev/null | grep -q .
