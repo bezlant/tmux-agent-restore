@@ -97,23 +97,29 @@ while IFS= read -r row || [ -n "$row" ]; do
     fi
 
     total=$((total + 1))
-    printf "%-12s %-8s %-8s %s\n" "$target" "($wname)" "$tool" "$sid"
+    log_target=$(restore_log_value "$target")
+    log_tool=$(restore_log_value "$tool")
+    log_sid=$(restore_log_value "$sid")
+    log_cwd=$(restore_log_value "$cwd")
+    log_original_cwd=$(restore_log_value "$original_cwd")
+    log_wname=$(restore_log_value "$wname")
+    printf "%-12s %-8s %-8s %s\n" "$log_target" "($log_wname)" "$log_tool" "$log_sid"
 
     if restore_flag_has "$flags" sid_invalid; then
         skip=$((skip + 1))
-        restore_log SKIP "$target $tool sid_invalid"
+        restore_log SKIP "$log_target $log_tool sid_invalid"
         continue
     fi
     if ! restore_sid_valid "$sid" "$sid_kind"; then
         skip=$((skip + 1))
-        restore_log SKIP "$target $tool invalid_sid"
+        restore_log SKIP "$log_target $log_tool invalid_sid"
         continue
     fi
 
     restore_fn="${tool}_restore_argv"
     if ! declare -F "$restore_fn" >/dev/null 2>&1; then
         skip=$((skip + 1))
-        restore_log SKIP "target=$target tool=$tool missing_adapter"
+        restore_log SKIP "target=$log_target tool=$log_tool missing_adapter"
         continue
     fi
 
@@ -121,7 +127,7 @@ while IFS= read -r row || [ -n "$row" ]; do
     : > "$argv_tmp"
     if ! "$restore_fn" "$sid" "$sid_kind" "$cwd" "$display_name" > "$argv_tmp" 2>/dev/null; then
         skip=$((skip + 1))
-        restore_log SKIP "$target $tool adapter_error"
+        restore_log SKIP "$log_target $log_tool adapter_error"
         continue
     fi
 
@@ -133,7 +139,7 @@ while IFS= read -r row || [ -n "$row" ]; do
 
     if ! cmd=$(shell_quote_argv_file "$pane_shell" "$argv_tmp"); then
         skip=$((skip + 1))
-        restore_log SKIP "target=$target tool=$tool quote_argv_failed"
+        restore_log SKIP "target=$log_target tool=$log_tool quote_argv_failed"
         continue
     fi
     cwd_q=$(shell_quote_word "$pane_shell" "$cwd")
@@ -143,32 +149,32 @@ while IFS= read -r row || [ -n "$row" ]; do
         printf "  [dry-run] %s: %s\n" "$target" "$full"
         if restore_flag_has "$flags" cwd_collapsed; then
             warn=$((warn + 1))
-            restore_log WARN "$target $tool cwd_collapsed orig=$original_cwd new=$cwd"
+            restore_log WARN "$log_target $log_tool cwd_collapsed orig=$log_original_cwd new=$log_cwd"
         else
             ok=$((ok + 1))
-            restore_log OK "target=$target tool=$tool dry_run=1"
+            restore_log OK "target=$log_target tool=$log_tool dry_run=1"
         fi
         continue
     fi
 
     if ! wait_for_prompt "$target"; then
         skip=$((skip + 1))
-        restore_log SKIP "$target $tool prompt_wait_timeout"
+        restore_log SKIP "$log_target $log_tool prompt_wait_timeout"
         continue
     fi
 
     if ! restore_send_keys "$target" "$full"; then
         warn=$((warn + 1))
-        restore_log WARN "$target $tool send_keys_failed"
+        restore_log WARN "$log_target $log_tool send_keys_failed"
         continue
     fi
 
     if restore_flag_has "$flags" cwd_collapsed; then
         warn=$((warn + 1))
-        restore_log WARN "$target $tool cwd_collapsed orig=$original_cwd new=$cwd"
+        restore_log WARN "$log_target $log_tool cwd_collapsed orig=$log_original_cwd new=$log_cwd"
     else
         ok=$((ok + 1))
-        restore_log OK "$target $tool $sid"
+        restore_log OK "$log_target $log_tool $log_sid"
     fi
 done < "$snapshot_tmp"
 

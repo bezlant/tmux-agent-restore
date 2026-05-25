@@ -85,6 +85,15 @@ restore_sid_valid() {
     esac
 }
 
+restore_log_value() {
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//$'\t'/\\t}"
+    value="${value//$'\r'/\\r}"
+    value="${value//$'\n'/\\n}"
+    printf '%s' "$value"
+}
+
 restore_marker_printf_format() {
     local marker="$1"
     local byte fmt=""
@@ -121,7 +130,7 @@ wait_for_prompt() {
         ""|*[!A-Za-z0-9_:-]*) return 1 ;;
     esac
 
-    if tmux capture-pane -p -t "$target" -S - -E - 2>/dev/null | grep -Fxq -- "$marker"; then
+    if tmux capture-pane -J -p -t "$target" -S - -E - 2>/dev/null | grep -Fxq -- "$marker"; then
         return 1
     fi
     marker_format=$(restore_marker_printf_format "$marker") || return 1
@@ -131,7 +140,7 @@ wait_for_prompt() {
     sleep_seconds="${TMUX_CLAUDE_PROMPT_SLEEP:-0.1}"
     attempts=0
     while [ "$attempts" -lt "$max_attempts" ]; do
-        if tmux capture-pane -p -t "$target" -S - -E - 2>/dev/null | grep -Fxq -- "$marker"; then
+        if tmux capture-pane -J -p -t "$target" -S - -E - 2>/dev/null | grep -Fxq -- "$marker"; then
             return 0
         fi
         sleep "$sleep_seconds"

@@ -2093,6 +2093,15 @@ tmux() {
                 printf '%s\n' "__tcready_forced__"
                 return 0
             fi
+            if [ "${MOCK_CAPTURE_AFTER_SEND:-}" = "wrapped" ] && \
+                [ -f "$MOCK_TMUX_LOG" ] && \
+                grep -qF "send-keys -t %1 printf '" "$MOCK_TMUX_LOG"; then
+                case " $* " in
+                    *" -J "*) printf '%s\n' "__tcready_wrapped__" ;;
+                    *) printf '%s\n%s\n' "__tcready_" "wrapped__" ;;
+                esac
+                return 0
+            fi
             if [ "${MOCK_CAPTURE_AFTER_SEND:-}" = "continuation" ] && \
                 [ -f "$MOCK_TMUX_LOG" ] && \
                 grep -qF "send-keys -t %1 printf '" "$MOCK_TMUX_LOG"; then
@@ -2205,6 +2214,20 @@ TMUX_CLAUDE_PROMPT_SLEEP=0
 assert_eq "wait_for_prompt rejects same-marker stale scrollback" \
     "1" \
     "$(wait_for_prompt "%1"; echo $?)"
+unset TMUX_CLAUDE_READY_MARKER
+unset TMUX_CLAUDE_PROMPT_ATTEMPTS
+unset TMUX_CLAUDE_PROMPT_SLEEP
+
+rm -f "$MOCK_TMUX_LOG"
+MOCK_CAPTURE=""
+MOCK_CAPTURE_AFTER_SEND=wrapped
+TMUX_CLAUDE_READY_MARKER="__tcready_wrapped__"
+TMUX_CLAUDE_PROMPT_ATTEMPTS=1
+TMUX_CLAUDE_PROMPT_SLEEP=0
+assert_eq "wait_for_prompt succeeds when marker wraps visually" \
+    "0" \
+    "$(wait_for_prompt "%1"; echo $?)"
+unset MOCK_CAPTURE_AFTER_SEND
 unset TMUX_CLAUDE_READY_MARKER
 unset TMUX_CLAUDE_PROMPT_ATTEMPTS
 unset TMUX_CLAUDE_PROMPT_SLEEP
@@ -2576,6 +2599,64 @@ assert_contains "restore logs cwd_collapsed warning" \
     "WARN 0:2.1 codex cwd_collapsed orig=/repo/pruned new=/repo" "$log_content"
 assert_contains "restore logs END counts" \
     "END ok=0 warn=1 skip=1 total=2" "$log_content"
+
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+resurrect_dir="$tmpdir/resurrect"
+mkdir -p "$tmpbin" "$resurrect_dir"
+
+cat > "$resurrect_dir/claude-panes.txt" <<'EOF'
+# tmux-claude snapshot v2
+# fields: target	tool	sid	sid_kind	cwd	original_cwd	wname	flags
+0:2.1	codex	019dd3be-9166-7750-8039-a1f9ecdad1f3	uuid	/repo%0AOK forged	/repo/pruned%0AWARN forged	codex-win	cwd_collapsed
+EOF
+
+cat > "$tmpbin/tmux" <<EOF
+#!/usr/bin/env bash
+case "\$1" in
+    show-option)
+        if [ "\$4" = "@resurrect-dir" ] || [ "\$3" = "@resurrect-dir" ]; then
+            printf '%s\n' "$resurrect_dir"
+            exit 0
+        fi
+        exit 1
+        ;;
+    display-message)
+        case "\$*" in
+            *"#{pane_current_command}"*) printf '%s\n' fish ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    list-panes)
+        printf '%s\n' x
+        ;;
+    send-keys)
+        printf '%s\n' "\$*" >> "$tmpdir/send-keys.log"
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+EOF
+chmod +x "$tmpbin/tmux"
+
+ORIG_PATH="$PATH"
+PATH="$tmpbin:$PATH"
+out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+rc=$?
+PATH="$ORIG_PATH"
+log_content=$(cat "$resurrect_dir/restore.log")
+forged_log_lines=$(printf '%s\n' "$log_content" | grep -E '^(OK|WARN) forged' || true)
+
+assert_eq "restore escaped log fields dry-run exits 0" "0" "$rc"
+assert_eq "restore log does not include forged standalone lines" \
+    "" "$forged_log_lines"
+assert_contains "restore log escapes cwd newline" \
+    "new=/repo\\nOK forged" "$log_content"
+assert_contains "restore log escapes original cwd newline" \
+    "orig=/repo/pruned\\nWARN forged" "$log_content"
 
 rm -rf "$tmpdir"
 
