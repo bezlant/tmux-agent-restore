@@ -2060,6 +2060,109 @@ rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
+echo "=== lib/restore_helpers: names, flags, prompt wait ==="
+# ============================================================
+# shellcheck source=../lib/restore_helpers.sh
+. "$PLUGIN_DIR/lib/restore_helpers.sh"
+
+tmux() {
+    case "$1" in
+        list-panes)
+            printf '%s\n%s\n' x x
+            ;;
+        display-message)
+            case "$*" in
+                *"#{pane_current_command}"*) printf '%s\n' "${MOCK_PANE_COMMAND:-fish}" ;;
+                *) return 1 ;;
+            esac
+            ;;
+        send-keys)
+            printf '%s\n' "$*" >> "$MOCK_TMUX_LOG"
+            ;;
+        capture-pane)
+            if [ "${MOCK_CAPTURE_AFTER_SEND:-}" = "1" ] && \
+                [ -f "$MOCK_TMUX_LOG" ] && \
+                grep -qF "send-keys -t %1 printf '%s\\n' __tcready_forced__ Enter" "$MOCK_TMUX_LOG"; then
+                printf '%s\n' "ready __tcready_forced__"
+                return 0
+            fi
+            printf '%s\n' "$MOCK_CAPTURE"
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+tmpdir=$(mktemp -d)
+MOCK_TMUX_LOG="$tmpdir/tmux.log"
+MOCK_CAPTURE=""
+
+assert_eq "restore_make_display_name appends pane index for multi-pane window" \
+    "work.2" \
+    "$(restore_make_display_name "work" "0:3.2")"
+
+assert_eq "restore_make_display_name falls back from shell window name" \
+    "0:3.2" \
+    "$(restore_make_display_name "fish" "0:3.2")"
+
+assert_eq "restore_make_display_name sanitizes metacharacters" \
+    "bad-rm--rf--.2" \
+    "$(restore_make_display_name "bad;rm -rf /" "0:3.2")"
+
+assert_eq "restore_flag_has finds exact semicolon-separated flag" \
+    "0" \
+    "$(restore_flag_has "sid_invalid;cwd_collapsed" "cwd_collapsed"; echo $?)"
+
+assert_eq "restore_flag_has rejects substring flag match" \
+    "1" \
+    "$(restore_flag_has "not_sid_invalid" "sid_invalid"; echo $?)"
+
+MOCK_PANE_COMMAND=claude
+assert_eq "wait_for_prompt returns nonzero for non-shell foreground" \
+    "1" \
+    "$(wait_for_prompt "%1"; echo $?)"
+
+MOCK_PANE_COMMAND=fish
+MOCK_CAPTURE=""
+MOCK_CAPTURE_AFTER_SEND=1
+TMUX_CLAUDE_READY_MARKER="__tcready_forced__"
+assert_eq "wait_for_prompt succeeds when marker appears" \
+    "0" \
+    "$(wait_for_prompt "%1"; echo $?)"
+assert_contains "wait_for_prompt sends printf marker" \
+    "send-keys -t %1 printf '%s\\n' __tcready_forced__ Enter" \
+    "$(cat "$MOCK_TMUX_LOG")"
+
+unset TMUX_CLAUDE_READY_MARKER
+unset MOCK_CAPTURE_AFTER_SEND
+
+MOCK_CAPTURE="old __tcready_stale__"
+TMUX_CLAUDE_READY_MARKER="__tcready_fresh__"
+TMUX_CLAUDE_PROMPT_ATTEMPTS=1
+TMUX_CLAUDE_PROMPT_SLEEP=0
+assert_eq "wait_for_prompt ignores stale marker with different fresh marker" \
+    "1" \
+    "$(wait_for_prompt "%1"; echo $?)"
+unset TMUX_CLAUDE_READY_MARKER
+unset TMUX_CLAUDE_PROMPT_ATTEMPTS
+unset TMUX_CLAUDE_PROMPT_SLEEP
+
+MOCK_PANE_COMMAND=fish
+MOCK_CAPTURE="old __tcready_same__"
+TMUX_CLAUDE_READY_MARKER="__tcready_same__"
+TMUX_CLAUDE_PROMPT_ATTEMPTS=1
+TMUX_CLAUDE_PROMPT_SLEEP=0
+assert_eq "wait_for_prompt rejects same-marker stale scrollback" \
+    "1" \
+    "$(wait_for_prompt "%1"; echo $?)"
+unset TMUX_CLAUDE_READY_MARKER
+unset TMUX_CLAUDE_PROMPT_ATTEMPTS
+unset TMUX_CLAUDE_PROMPT_SLEEP
+
+unset -f tmux
+rm -rf "$tmpdir"
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
