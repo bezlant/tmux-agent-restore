@@ -318,6 +318,26 @@ setup_save_fixture() {
     write_save_ps_stub "$fixture_dir/bin/ps" "$fixture_dir"
 }
 
+setup_save_just_recipe_fixture() {
+    local fixture_dir="$1"
+    local recipe="$2"
+    local cwd="$3"
+
+    mkdir -p "$fixture_dir/bin" "$fixture_dir/resurrect" "$fixture_dir/home"
+    printf '%s\n' "$fixture_dir/resurrect" > "$fixture_dir/resurrect_dir"
+    printf '%s\n' "0" > "$fixture_dir/sessions"
+    printf '%s\n' "1" > "$fixture_dir/windows"
+    printf '%s\n' "1" > "$fixture_dir/panes"
+    printf '%s\n' "work-win" > "$fixture_dir/window_name"
+    printf '%s\n' "100" > "$fixture_dir/pane_pid"
+    printf '%s\n' "$cwd" > "$fixture_dir/pane_current_path"
+    printf '%s\n' just > "$fixture_dir/pane_current_command"
+    printf ' 100     1 fish\n 200   100 just %s\n' "$recipe" > "$fixture_dir/ps_tree"
+    printf 'just %s\n' "$recipe" > "$fixture_dir/ps_command"
+    write_save_tmux_stub "$fixture_dir/bin/tmux" "$fixture_dir"
+    write_save_ps_stub "$fixture_dir/bin/ps" "$fixture_dir"
+}
+
 run_save_fixture() {
     local fixture_dir="$1"
     local old_path="$PATH"
@@ -454,7 +474,19 @@ assert_contains "save_to_restore_e2e_cwd_collapsed logs warning" \
     "WARN 0:1.1 codex cwd_collapsed orig=$missing_cwd new=$existing_cwd" "$restore_log_content"
 rm -rf "$tmpdir"
 
-unset -f write_save_tmux_stub write_save_ps_stub setup_save_fixture run_save_fixture run_restore_fixture
+for recipe in claude codex nvim; do
+    tmpdir=$(mktemp -d)
+    setup_save_just_recipe_fixture "$tmpdir" "$recipe" "$tmpdir/project"
+    mkdir -p "$tmpdir/project"
+    run_save_fixture "$tmpdir"
+    row=$(snapshot_read "$tmpdir/resurrect/claude-panes.txt" 2>/dev/null)
+    assert_eq "save_just_${recipe}_not_misclassified tool" "just" "$(printf '%s' "$row" | cut -f2)"
+    assert_eq "save_just_${recipe}_recipe_sid" "$recipe" "$(printf '%s' "$row" | cut -f3)"
+    assert_eq "save_just_${recipe}_sid_kind_recipe" "recipe" "$(printf '%s' "$row" | cut -f4)"
+    rm -rf "$tmpdir"
+done
+
+unset -f write_save_tmux_stub write_save_ps_stub setup_save_fixture setup_save_just_recipe_fixture run_save_fixture run_restore_fixture
 
 # ============================================================
 echo ""

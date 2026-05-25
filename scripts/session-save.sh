@@ -63,6 +63,32 @@ save_detect_field() {
     printf '%s\n' "$row" | awk -F '\t' -v field="$field" 'NR == 1 { print $field }'
 }
 
+save_adapter_exists() {
+    local wanted="$1"
+    local adapter
+    for adapter in $(adapters_list); do
+        [ "$adapter" = "$wanted" ] && return 0
+    done
+    return 1
+}
+
+save_pane_adapter_hint() {
+    local target="$1"
+    local cmd adapter
+    cmd=$(tmux display-message -p -t "$target" '#{pane_current_command}' 2>/dev/null || true)
+    case "$cmd" in
+        vim|nvim)
+            adapter="nvim"
+            ;;
+        *)
+            adapter="$cmd"
+            ;;
+    esac
+    [ -n "$adapter" ] || return 1
+    save_adapter_exists "$adapter" || return 1
+    printf '%s\n' "$adapter"
+}
+
 mkdir -p "$RESURRECT_DIR"
 
 _attempts=0
@@ -95,7 +121,19 @@ while IFS= read -r session || [ -n "$session" ]; do
 
             target="$session:$win.$pane"
             detect_row=""
+            preferred_adapter=$(save_pane_adapter_hint "$target" || true)
+            if [ -n "$preferred_adapter" ]; then
+                detect_fn="${preferred_adapter}_detect"
+                if declare -F "$detect_fn" >/dev/null 2>&1 &&
+                    detect_row=$("$detect_fn" "$target" 2>/dev/null); then
+                    [ -n "$detect_row" ] || detect_row=""
+                else
+                    detect_row=""
+                fi
+            fi
             for adapter in $(adapters_list); do
+                [ -n "$detect_row" ] && break
+                [ "$adapter" = "$preferred_adapter" ] && continue
                 detect_fn="${adapter}_detect"
                 if declare -F "$detect_fn" >/dev/null 2>&1 &&
                     detect_row=$("$detect_fn" "$target" 2>/dev/null); then
