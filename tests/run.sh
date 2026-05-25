@@ -1839,6 +1839,91 @@ rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
+echo "=== lib/quote: shell_quote_word and shell_quote_argv ==="
+# ============================================================
+# shellcheck source=../lib/quote.sh
+. "$PLUGIN_DIR/lib/quote.sh"
+
+assert_eq "quote_word sh wraps plain word" \
+    "'hello'" \
+    "$(shell_quote_word sh hello)"
+
+assert_eq "quote_word fish preserves spaces" \
+    "'two words'" \
+    "$(shell_quote_word fish "two words")"
+
+assert_eq "quote_word escapes single quote for sh-compatible shells" \
+    "'it'\''s'" \
+    "$(shell_quote_word sh "it's")"
+
+assert_eq "quote_word escapes single quote for fish" \
+    "'it'\''s'" \
+    "$(shell_quote_word fish "it's")"
+
+assert_eq "quote_word empty word is quoted empty string" \
+    "''" \
+    "$(shell_quote_word sh "")"
+
+danger_dir="${TMPDIR:-/tmp}/tmux-claude-quote-danger"
+rm -rf "$danger_dir"
+danger_word="x'; mkdir -p '$danger_dir'; echo '"
+quoted=$(shell_quote_word sh "$danger_word")
+eval "set -- $quoted"
+assert_eq "quote_word round-trips shell metacharacters without executing" \
+    "$danger_word" \
+    "$1"
+assert_eq "quote_word did not execute injected mkdir" \
+    "absent" \
+    "$([ -d "$danger_dir" ] && echo present || echo absent)"
+
+argv=$(printf 'ccy\n--name\nwork name\n--resume\n0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf')
+assert_eq "quote_argv joins newline words safely" \
+    "'ccy' '--name' 'work name' '--resume' '0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf'" \
+    "$(shell_quote_argv fish "$argv")"
+
+danger_argv=$(printf 'cmd\n%s' "$danger_word")
+quoted_argv=$(shell_quote_argv sh "$danger_argv")
+eval "set -- $quoted_argv"
+assert_eq "quote_argv preserves dangerous second word" \
+    "$danger_word" \
+    "$2"
+assert_eq "quote_argv did not execute injected mkdir" \
+    "absent" \
+    "$([ -d "$danger_dir" ] && echo present || echo absent)"
+
+for shell_path in /bin/sh /bin/bash /bin/zsh /bin/dash /bin/ksh; do
+    [ -x "$shell_path" ] || continue
+    shell_name="${shell_path##*/}"
+    rm -rf "$danger_dir"
+    out=$("$shell_path" -c "set -- $quoted_argv; printf '<%s><%s>\n' \"\$1\" \"\$2\"")
+    assert_eq "quote_argv round-trips under $shell_name" \
+        "<cmd><$danger_word>" \
+        "$out"
+    assert_eq "quote_argv under $shell_name did not execute injected mkdir" \
+        "absent" \
+        "$([ -d "$danger_dir" ] && echo present || echo absent)"
+done
+
+fish_path="$(command -v fish 2>/dev/null || true)"
+if [ -n "$fish_path" ]; then
+    rm -rf "$danger_dir"
+    out=$("$fish_path" -c "set -l words $quoted_argv; printf '<%s><%s>\n' \$words[1] \$words[2]")
+    assert_eq "quote_argv round-trips under fish" \
+        "<cmd><$danger_word>" \
+        "$out"
+    assert_eq "quote_argv under fish did not execute injected mkdir" \
+        "absent" \
+        "$([ -d "$danger_dir" ] && echo present || echo absent)"
+fi
+
+assert_eq "quote_argv empty argv fails" \
+    "1" \
+    "$(shell_quote_argv sh "" >/dev/null; echo $?)"
+
+rm -rf "$danger_dir"
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
