@@ -2163,6 +2163,222 @@ rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
+echo "=== session-restore: dry-run adapter dispatch ==="
+# ============================================================
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+resurrect_dir="$tmpdir/resurrect"
+pwned="${TMPDIR:-/tmp}/tmux-claude-restore-pwned"
+mkdir -p "$tmpbin" "$resurrect_dir"
+rm -f "$pwned"
+
+cat > "$resurrect_dir/claude-panes.txt" <<'EOF'
+# Claude/Codex session mapping — v1 fixture for Chunk 3 restore
+0:1.1|claude|0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf|/repo/claude|fine tuning
+0:2.1|codex|019dd3be-9166-7750-8039-a1f9ecdad1f3|/repo/codex|codex-win
+0:3.1|claude|picker|/repo/picker|picker-win
+0:4.1|nvim|picker|/repo/edit|editor
+0:5.1|just|dev|/repo/app|server
+EOF
+printf "0:6.1|claude|0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf|/repo/evil'; touch '%s'; echo '|bad;name\n" "$pwned" >> "$resurrect_dir/claude-panes.txt"
+
+cat > "$tmpbin/tmux" <<EOF
+#!/usr/bin/env bash
+case "\$1" in
+    show-option)
+        if [ "\$4" = "@resurrect-dir" ] || [ "\$3" = "@resurrect-dir" ]; then
+            printf '%s\n' "$resurrect_dir"
+            exit 0
+        fi
+        exit 1
+        ;;
+    display-message)
+        case "\$*" in
+            *"#{pane_current_command}"*) printf '%s\n' fish ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    list-panes)
+        printf '%s\n' x
+        ;;
+    send-keys)
+        printf '%s\n' "\$*" >> "$tmpdir/send-keys.log"
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+EOF
+chmod +x "$tmpbin/tmux"
+
+ORIG_PATH="$PATH"
+PATH="$tmpbin:$PATH"
+out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+rc=$?
+PATH="$ORIG_PATH"
+
+assert_eq "restore dry-run exits 0" "0" "$rc"
+assert_contains "restore dry-run dispatches claude adapter" \
+    "'ccy' '--name' 'fine-tuning' '--resume' '0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf'" "$out"
+assert_contains "restore dry-run dispatches codex adapter" \
+    "'cxy' 'resume' '019dd3be-9166-7750-8039-a1f9ecdad1f3'" "$out"
+assert_contains "restore dry-run handles claude picker" \
+    "'ccy' '--name' 'picker-win' '--resume'" "$out"
+assert_contains "restore dry-run dispatches nvim adapter" \
+    "'nvim'" "$out"
+assert_contains "restore dry-run dispatches just adapter" \
+    "'just' 'dev'" "$out"
+assert_contains "restore dry-run uses cd fallback" \
+    "cd '/repo/claude' 2>/dev/null || cd;" "$out"
+assert_contains "restore dry-run includes malicious fixture pane" \
+    "[dry-run] 0:6.1:" "$out"
+assert_eq "restore dry-run does not execute malicious cwd while building command" \
+    "absent" \
+    "$([ -f "$pwned" ] && echo present || echo absent)"
+assert_eq "restore dry-run does not send keys" \
+    "absent" \
+    "$([ -f "$tmpdir/send-keys.log" ] && echo present || echo absent)"
+
+rm -f "$pwned"
+rm -rf "$tmpdir"
+
+# ============================================================
+echo ""
+echo "=== session-restore: failure isolation ==="
+# ============================================================
+
+write_restore_tmux_stub() {
+    local tmux_path="$1"
+    local restore_dir="$2"
+    local send_keys_log="$3"
+
+    cat > "$tmux_path" <<EOF
+#!/usr/bin/env bash
+case "\$1" in
+    show-option)
+        if [ "\$4" = "@resurrect-dir" ] || [ "\$3" = "@resurrect-dir" ]; then
+            printf '%s\n' "$restore_dir"
+            exit 0
+        fi
+        exit 1
+        ;;
+    display-message)
+        case "\$*" in
+            *"#{pane_current_command}"*) printf '%s\n' fish ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    list-panes)
+        printf '%s\n' x
+        ;;
+    send-keys)
+        printf '%s\n' "\$*" >> "$send_keys_log"
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+EOF
+    chmod +x "$tmux_path"
+}
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+resurrect_dir="$tmpdir/resurrect"
+send_keys_log="$tmpdir/send-keys.log"
+mkdir -p "$tmpbin" "$resurrect_dir"
+{
+    printf '# tmux-claude snapshot v9\n'
+    printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
+    printf '0:9.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/v9\t\tv9-win\t\n'
+} > "$resurrect_dir/claude-panes.txt"
+write_restore_tmux_stub "$tmpbin/tmux" "$resurrect_dir" "$send_keys_log"
+
+ORIG_PATH="$PATH"
+PATH="$tmpbin:$PATH"
+out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+rc=$?
+PATH="$ORIG_PATH"
+restore_log_content=$(cat "$resurrect_dir/restore.log" 2>/dev/null || true)
+
+assert_eq "restore snapshot_read failure exits 0" "0" "$rc"
+assert_eq "restore snapshot_read failure does not send keys" \
+    "absent" \
+    "$([ -f "$send_keys_log" ] && echo present || echo absent)"
+assert_contains "restore snapshot_read failure logs skip" \
+    "SKIP snapshot snapshot_read_failed" \
+    "$restore_log_content"
+assert_contains "restore snapshot_read failure logs final counts" \
+    "END ok=0 warn=0 skip=1 total=0" \
+    "$restore_log_content"
+
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+resurrect_dir="$tmpdir/resurrect"
+send_keys_log="$tmpdir/send-keys.log"
+mkdir -p "$tmpbin" "$resurrect_dir"
+{
+    printf '# tmux-claude snapshot v2\n'
+    printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
+    printf '0:7.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/v2\t\tv2 win\t\n'
+} > "$resurrect_dir/claude-panes.txt"
+write_restore_tmux_stub "$tmpbin/tmux" "$resurrect_dir" "$send_keys_log"
+
+ORIG_PATH="$PATH"
+PATH="$tmpbin:$PATH"
+out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+rc=$?
+PATH="$ORIG_PATH"
+
+assert_eq "restore v2 empty fields exits 0" "0" "$rc"
+assert_contains "restore v2 empty fields preserves cwd column" \
+    "cd '/repo/v2' 2>/dev/null || cd;" \
+    "$out"
+assert_contains "restore v2 empty fields preserves wname after empty original_cwd" \
+    "'--name' 'v2-win'" \
+    "$out"
+
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+resurrect_dir="$tmpdir/resurrect"
+send_keys_log="$tmpdir/send-keys.log"
+mkdir -p "$tmpbin" "$resurrect_dir"
+{
+    printf '# tmux-claude snapshot v2\n'
+    printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
+    printf '0:8.1\tjust\tdev\tnone\t/repo/bad\t\tbad-just\t\n'
+    printf '0:9.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/good\t\tgood claude\t\n'
+} > "$resurrect_dir/claude-panes.txt"
+write_restore_tmux_stub "$tmpbin/tmux" "$resurrect_dir" "$send_keys_log"
+
+ORIG_PATH="$PATH"
+PATH="$tmpbin:$PATH"
+out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+rc=$?
+PATH="$ORIG_PATH"
+restore_log_content=$(cat "$resurrect_dir/restore.log" 2>/dev/null || true)
+
+assert_eq "restore adapter error isolation exits 0" "0" "$rc"
+assert_contains "restore adapter error logs bad row skip" \
+    "SKIP 0:8.1 just adapter_error" \
+    "$restore_log_content"
+assert_contains "restore adapter error continues to good claude row" \
+    "'ccy' '--name' 'good-claude' '--resume' '0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf'" \
+    "$out"
+assert_contains "restore adapter error logs final counts" \
+    "END ok=1 warn=0 skip=1 total=2" \
+    "$restore_log_content"
+
+rm -rf "$tmpdir"
+unset -f write_restore_tmux_stub
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
