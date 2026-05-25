@@ -631,6 +631,7 @@ elif [ "\$1" = "-p" ] && [ "\$3" = "-o" ] && [ "\$4" = "ppid=" ]; then
         100) printf '%s\n' 1 ;;
         200) printf '%s\n' 100 ;;
         300) printf '%s\n' 200 ;;
+        400) printf '%s\n' 300 ;;
         *) exit 1 ;;
     esac
 elif [ "\$1" = "-p" ] && [ "\$3" = "-o" ] && [ "\$4" = "command=" ]; then
@@ -638,6 +639,7 @@ elif [ "\$1" = "-p" ] && [ "\$3" = "-o" ] && [ "\$4" = "command=" ]; then
         100) printf '%s\n' fish ;;
         200) cat "\$fixture_dir/ps_command_200" ;;
         300) cat "\$fixture_dir/ps_command_300" ;;
+        400) cat "\$fixture_dir/ps_command_400" ;;
         *) exit 1 ;;
     esac
 else
@@ -658,8 +660,10 @@ setup_real_hook_fixture() {
     printf '%s\n' " 100     1 fish" > "$tmpdir/ps_tree"
     printf ' 200   100 %s --resume real-session\n' "$tool" >> "$tmpdir/ps_tree"
     printf ' 300   200 bash %s\n' "$hook_script" >> "$tmpdir/ps_tree"
+    printf ' 400   300 awk -v root=100 -v tool=%s ...\n' "$tool" >> "$tmpdir/ps_tree"
     printf '%s --resume real-session\n' "$tool" > "$tmpdir/ps_command_200"
     printf 'bash %s\n' "$hook_script" > "$tmpdir/ps_command_300"
+    printf 'awk -v root=100 -v tool=%s ...\n' "$tool" > "$tmpdir/ps_command_400"
     write_real_hook_ps_stub "$tmpdir/bin/ps" "$tmpdir"
 }
 
@@ -678,6 +682,8 @@ else
         "set-option -p -t %1 @claude_session_pid 200" "$hook_log"
     assert_not_contains "Claude real helper rejects hook process pid 300" \
         "@claude_session_pid 300" "$hook_log"
+    assert_not_contains "Claude real helper rejects hook helper child pid 400" \
+        "@claude_session_pid 400" "$hook_log"
 
     rm -rf "$tmpdir"
 fi
@@ -697,6 +703,8 @@ else
         "set-option -p -t %1 @codex_session_pid 200" "$hook_log"
     assert_not_contains "Codex real helper rejects hook process pid 300" \
         "@codex_session_pid 300" "$hook_log"
+    assert_not_contains "Codex real helper rejects hook helper child pid 400" \
+        "@codex_session_pid 400" "$hook_log"
 
     rm -rf "$tmpdir"
 fi
