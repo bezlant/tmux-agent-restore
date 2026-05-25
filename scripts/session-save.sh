@@ -110,6 +110,9 @@ snapshot_write_header > "$tmpfile"
 
 pane_count=0
 
+# SessionStart hooks can briefly overlap their async save. If process
+# inspection sees a transient hook helper, validation may degrade a row to
+# picker/none; a later save corrects it once the hook subtree is gone.
 while IFS= read -r session || [ -n "$session" ]; do
     [ -n "$session" ] || continue
 

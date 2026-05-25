@@ -2400,17 +2400,23 @@ assert_not_contains "claude_validate uuid with HOME unset does not crash on unbo
 tmp_home="$tmpdir/claude-home"
 mkdir -p "$tmp_home"
 HOME="$tmp_home"
+claude_validate "$CLAUDE_UUID" uuid
+claude_missing_status=$?
 assert_eq "claude_validate uuid missing jsonl returns nonzero" \
     "1" \
-    "$(claude_validate "$CLAUDE_UUID" uuid; echo $?)"
+    "$claude_missing_status"
 mkdir -p "$HOME/.claude/projects/my-project"
 : > "$HOME/.claude/projects/my-project/$CLAUDE_UUID.jsonl"
+claude_validate "$CLAUDE_UUID" uuid
+claude_present_status=$?
 assert_eq "claude_validate uuid present jsonl returns zero" \
     "0" \
-    "$(claude_validate "$CLAUDE_UUID" uuid; echo $?)"
+    "$claude_present_status"
+claude_validate not-a-uuid uuid
+claude_invalid_status=$?
 assert_eq "claude_validate invalid uuid string returns nonzero" \
     "1" \
-    "$(claude_validate not-a-uuid uuid; echo $?)"
+    "$claude_invalid_status"
 restore_home
 
 CODEX_UUID=019dd3be-9166-7750-8039-a1f9ecdad1f3
@@ -2431,17 +2437,23 @@ assert_not_contains "codex_validate uuid with HOME unset does not crash on unbou
 tmp_home="$tmpdir/codex-home"
 mkdir -p "$tmp_home"
 HOME="$tmp_home"
+codex_validate "$CODEX_UUID" uuid
+codex_missing_status=$?
 assert_eq "codex_validate uuid missing rollout jsonl returns nonzero" \
     "1" \
-    "$(codex_validate "$CODEX_UUID" uuid; echo $?)"
+    "$codex_missing_status"
 mkdir -p "$HOME/.codex/sessions/2026/05/25"
 : > "$HOME/.codex/sessions/2026/05/25/rollout-2026-05-25T000000-$CODEX_UUID.jsonl"
+codex_validate "$CODEX_UUID" uuid
+codex_present_status=$?
 assert_eq "codex_validate uuid present rollout jsonl returns zero" \
     "0" \
-    "$(codex_validate "$CODEX_UUID" uuid; echo $?)"
+    "$codex_present_status"
+codex_validate not-a-uuid uuid
+codex_invalid_status=$?
 assert_eq "codex_validate invalid uuid string returns nonzero" \
     "1" \
-    "$(codex_validate not-a-uuid uuid; echo $?)"
+    "$codex_invalid_status"
 restore_home
 
 tmp_home="$tmpdir/non-uuid-home"
