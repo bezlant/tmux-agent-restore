@@ -30,7 +30,6 @@ claude_validate() {
 claude_restore_argv() {
     local sid="$1"
     local sid_kind="$2"
-    local cwd="$3"
     local display_name="$4"
     printf '%s\n' ccy --name "$display_name" --resume
     if [ "$sid_kind" = "uuid" ] && [ -n "$sid" ] && [ "$sid" != "-" ]; then
