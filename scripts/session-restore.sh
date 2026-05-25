@@ -146,7 +146,8 @@ while IFS= read -r row || [ -n "$row" ]; do
     full="cd $cwd_q 2>/dev/null || cd; $cmd"
 
     if $DRY_RUN; then
-        printf "  [dry-run] %s: %s\n" "$target" "$full"
+        display_full=$(restore_log_value "$full")
+        printf "  [dry-run] %s: %s\n" "$log_target" "$display_full"
         if restore_flag_has "$flags" cwd_collapsed; then
             warn=$((warn + 1))
             restore_log WARN "$log_target $log_tool cwd_collapsed orig=$log_original_cwd new=$log_cwd"

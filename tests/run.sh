@@ -2649,6 +2649,7 @@ rc=$?
 PATH="$ORIG_PATH"
 log_content=$(cat "$resurrect_dir/restore.log")
 forged_log_lines=$(printf '%s\n' "$log_content" | grep -E '^(OK|WARN) forged' || true)
+forged_dry_run_lines=$(printf '%s\n' "$out" | grep -E '^(OK|WARN) forged' || true)
 
 assert_eq "restore escaped log fields dry-run exits 0" "0" "$rc"
 assert_eq "restore log does not include forged standalone lines" \
@@ -2657,6 +2658,10 @@ assert_contains "restore log escapes cwd newline" \
     "new=/repo\\nOK forged" "$log_content"
 assert_contains "restore log escapes original cwd newline" \
     "orig=/repo/pruned\\nWARN forged" "$log_content"
+assert_eq "restore dry-run does not include forged standalone lines" \
+    "" "$forged_dry_run_lines"
+assert_contains "restore dry-run escapes cwd newline" \
+    "cd '/repo\\nOK forged'" "$out"
 
 rm -rf "$tmpdir"
 
