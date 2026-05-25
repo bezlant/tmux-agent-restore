@@ -3399,6 +3399,215 @@ rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
+echo "=== shell/tres.fish: restored session discovery ==="
+# ============================================================
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+tmphome="$tmpdir/home"
+mkdir -p "$tmpbin" "$tmphome/.config/tmux/resurrect"
+
+cat > "$tmpbin/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TMUX_STUB_LOG"
+case "$1" in
+    show-option)
+        exit 1
+        ;;
+    has-session)
+        if [ "${TMUX_HAS_SESSION:-0}" = "1" ]; then
+            exit 0
+        fi
+        exit 1
+        ;;
+    new-session)
+        exit 0
+        ;;
+    list-windows)
+        target=""
+        while [ "$#" -gt 0 ]; do
+            if [ "$1" = "-t" ]; then
+                shift
+                target="${1:-}"
+                break
+            fi
+            shift
+        done
+        case "$target" in
+            work) printf '%s\n' "1: fine-tuning" "2: seo" ;;
+            0) printf '%s\n' "1: fallback" "2: other" ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    kill-session)
+        exit 0
+        ;;
+    attach)
+        exit 0
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+EOF
+chmod +x "$tmpbin/tmux"
+cat > "$tmpbin/sleep" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$tmpbin/sleep"
+
+cat > "$tmphome/.config/tmux/resurrect/last" <<'EOF'
+pane	work	1	0	:	1	editor	:/repo	1	fish	:
+window	work	1	:fine-tuning	0	:	layout	off
+EOF
+
+old_path="$PATH"
+PATH="$tmpbin:$PATH"
+TMUX_STUB_LOG="$tmpdir/tmux.log" \
+HOME="$tmphome" \
+XDG_CONFIG_HOME="$tmphome/.config" \
+TMUX_HAS_SESSION=0 \
+fish -c 'source "$argv[1]"; tres' "$PLUGIN_DIR/shell/tres.fish"
+rc=$?
+PATH="$old_path"
+
+log=$(cat "$tmpdir/tmux.log")
+assert_eq "tres exits 0 with discovered session" "0" "$rc"
+assert_contains "tres creates bootstrap when no tmux server exists" \
+    "new-session -d -s _tres_bootstrap" "$log"
+assert_contains "tres waits on discovered session work" \
+    "list-windows -t work" "$log"
+assert_contains "tres kills bootstrap session" \
+    "kill-session -t _tres_bootstrap" "$log"
+assert_contains "tres attaches to discovered session work" \
+    "attach -t work" "$log"
+assert_not_contains "tres does not attach to hardcoded zero when snapshot has work" \
+    "attach -t 0" "$log"
+
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+tmphome="$tmpdir/home"
+mkdir -p "$tmpbin" "$tmphome/.config/tmux/resurrect"
+
+cat > "$tmpbin/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TMUX_STUB_LOG"
+case "$1" in
+    show-option) exit 1 ;;
+    has-session) exit 0 ;;
+    list-windows)
+        target=""
+        while [ "$#" -gt 0 ]; do
+            if [ "$1" = "-t" ]; then
+                shift
+                target="${1:-}"
+                break
+            fi
+            shift
+        done
+        [ "$target" = "0" ] || exit 1
+        printf '%s\n' "1: fallback" "2: restored"
+        ;;
+    kill-session) exit 0 ;;
+    attach) exit 0 ;;
+    *) exit 1 ;;
+esac
+EOF
+chmod +x "$tmpbin/tmux"
+cat > "$tmpbin/sleep" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$tmpbin/sleep"
+
+old_path="$PATH"
+PATH="$tmpbin:$PATH"
+TMUX_STUB_LOG="$tmpdir/tmux.log" HOME="$tmphome" XDG_CONFIG_HOME="$tmphome/.config" fish -c 'source "$argv[1]"; tres' "$PLUGIN_DIR/shell/tres.fish"
+rc=$?
+PATH="$old_path"
+
+log=$(cat "$tmpdir/tmux.log")
+assert_eq "tres exits 0 without snapshot" "0" "$rc"
+assert_contains "tres defaults to session zero without snapshot" "attach -t 0" "$log"
+assert_not_contains "tres does not create bootstrap when tmux server exists" "new-session -d -s _tres_bootstrap" "$log"
+
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+tmphome="$tmpdir/home"
+custom_resurrect="$tmpdir/custom-resurrect"
+mkdir -p "$tmpbin" "$tmphome/.config/tmux/resurrect" "$custom_resurrect"
+
+cat > "$tmpbin/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TMUX_STUB_LOG"
+case "$1" in
+    show-option)
+        case "$*" in
+            *"@resurrect-dir"*) printf '%s\n' "$CUSTOM_RESURRECT_DIR"; exit 0 ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    has-session) exit 0 ;;
+    list-windows)
+        target=""
+        while [ "$#" -gt 0 ]; do
+            if [ "$1" = "-t" ]; then
+                shift
+                target="${1:-}"
+                break
+            fi
+            shift
+        done
+        [ "$target" = "work" ] || exit 1
+        printf '%s\n' "1: fine-tuning" "2: seo"
+        ;;
+    kill-session) exit 0 ;;
+    attach) exit 0 ;;
+    *) exit 1 ;;
+esac
+EOF
+chmod +x "$tmpbin/tmux"
+cat > "$tmpbin/sleep" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$tmpbin/sleep"
+
+cat > "$custom_resurrect/last" <<'EOF'
+pane	work	1	0	:	1	editor	:/repo	1	fish	:
+EOF
+
+old_path="$PATH"
+PATH="$tmpbin:$PATH"
+TMUX_STUB_LOG="$tmpdir/tmux.log" \
+HOME="$tmphome" \
+XDG_CONFIG_HOME="$tmphome/.config" \
+CUSTOM_RESURRECT_DIR="$custom_resurrect" \
+fish -c 'source "$argv[1]"; tres' "$PLUGIN_DIR/shell/tres.fish"
+rc=$?
+PATH="$old_path"
+
+log=$(cat "$tmpdir/tmux.log")
+assert_eq "tres exits 0 with custom resurrect dir" "0" "$rc"
+assert_contains "tres reads target from custom resurrect dir" "attach -t work" "$log"
+assert_not_contains "tres does not fall back when custom resurrect snapshot exists" "attach -t 0" "$log"
+
+rm -rf "$tmpdir"
+
+if command -v fish >/dev/null 2>&1; then
+    fish -n "$PLUGIN_DIR/shell/tres.fish"
+    assert_eq "tres fish syntax is valid" "0" "$?"
+else
+    echo "  WARN: fish not installed; skipping tres syntax check"
+fi
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
