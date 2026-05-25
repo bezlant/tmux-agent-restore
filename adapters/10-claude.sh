@@ -13,7 +13,16 @@ claude_detect() {
 }
 
 claude_validate() {
-    return 0
+    local sid="$1"
+    local sid_kind="$2"
+
+    [ "$sid_kind" = "uuid" ] || return 0
+    printf '%s' "$sid" | LC_ALL=C grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' || return 1
+
+    find "${HOME}/.claude/projects" \
+        -type f \
+        -name "${sid}.jsonl" \
+        -print -quit 2>/dev/null | grep -q .
 }
 
 claude_restore_argv() {

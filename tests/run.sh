@@ -1601,9 +1601,9 @@ assert_contains "claude_detect passes claude pid option" "@claude_session_pid" "
 assert_contains "claude_detect passes claude cwd option" "@claude_cwd" "$claude_detect_args"
 assert_not_contains "claude_detect does not pass codex sid option" "@codex_session_id" "$claude_detect_args"
 
-assert_eq "claude_validate uuid is no-op in chunk 2" \
+assert_eq "claude_validate picker requires no artifact" \
     "0" \
-    "$(claude_validate "$MOCK_SID" uuid; echo $?)"
+    "$(claude_validate picker picker; echo $?)"
 
 assert_eq "claude_restore_argv uuid includes name and resume uuid" \
     "$(printf 'ccy\n--name\nwork\n--resume\n0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf')" \
@@ -1642,9 +1642,9 @@ assert_contains "codex_detect passes codex pid option" "@codex_session_pid" "$co
 assert_contains "codex_detect passes codex cwd option" "@codex_cwd" "$codex_detect_args"
 assert_not_contains "codex_detect does not pass claude sid option" "@claude_session_id" "$codex_detect_args"
 
-assert_eq "codex_validate uuid is no-op in chunk 2" \
+assert_eq "codex_validate picker requires no artifact" \
     "0" \
-    "$(codex_validate "$MOCK_SID" uuid; echo $?)"
+    "$(codex_validate picker picker; echo $?)"
 
 assert_eq "codex_restore_argv uuid includes resume uuid" \
     "$(printf 'cxy\nresume\n019dd3be-9166-7750-8039-a1f9ecdad1f3')" \
@@ -1835,6 +1835,67 @@ for name in claude codex nvim just; do
 done
 
 PATH="$ORIG_PATH"
+rm -rf "$tmpdir"
+
+# ============================================================
+echo ""
+echo "=== adapters: uuid artifact validation ==="
+# ============================================================
+
+tmpdir=$(mktemp -d)
+old_home="${HOME:-}"
+
+CLAUDE_UUID=0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf
+tmp_home="$tmpdir/claude-home"
+mkdir -p "$tmp_home"
+HOME="$tmp_home"
+assert_eq "claude_validate uuid missing jsonl returns nonzero" \
+    "1" \
+    "$(claude_validate "$CLAUDE_UUID" uuid; echo $?)"
+mkdir -p "$HOME/.claude/projects/my-project"
+: > "$HOME/.claude/projects/my-project/$CLAUDE_UUID.jsonl"
+assert_eq "claude_validate uuid present jsonl returns zero" \
+    "0" \
+    "$(claude_validate "$CLAUDE_UUID" uuid; echo $?)"
+assert_eq "claude_validate invalid uuid string returns nonzero" \
+    "1" \
+    "$(claude_validate not-a-uuid uuid; echo $?)"
+HOME="$old_home"
+
+CODEX_UUID=019dd3be-9166-7750-8039-a1f9ecdad1f3
+tmp_home="$tmpdir/codex-home"
+mkdir -p "$tmp_home"
+HOME="$tmp_home"
+assert_eq "codex_validate uuid missing rollout jsonl returns nonzero" \
+    "1" \
+    "$(codex_validate "$CODEX_UUID" uuid; echo $?)"
+mkdir -p "$HOME/.codex/sessions/2026/05/25"
+: > "$HOME/.codex/sessions/2026/05/25/rollout-2026-05-25T000000-$CODEX_UUID.jsonl"
+assert_eq "codex_validate uuid present rollout jsonl returns zero" \
+    "0" \
+    "$(codex_validate "$CODEX_UUID" uuid; echo $?)"
+assert_eq "codex_validate invalid uuid string returns nonzero" \
+    "1" \
+    "$(codex_validate not-a-uuid uuid; echo $?)"
+HOME="$old_home"
+
+tmp_home="$tmpdir/non-uuid-home"
+mkdir -p "$tmp_home"
+HOME="$tmp_home"
+assert_eq "claude_validate picker returns zero without artifacts" \
+    "0" \
+    "$(claude_validate picker picker; echo $?)"
+assert_eq "claude_validate none returns zero without artifacts" \
+    "0" \
+    "$(claude_validate - none; echo $?)"
+assert_eq "codex_validate picker returns zero without artifacts" \
+    "0" \
+    "$(codex_validate picker picker; echo $?)"
+assert_eq "codex_validate none returns zero without artifacts" \
+    "0" \
+    "$(codex_validate - none; echo $?)"
+HOME="$old_home"
+
 rm -rf "$tmpdir"
 
 # ============================================================
