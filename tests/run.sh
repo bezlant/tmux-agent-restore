@@ -2379,6 +2379,72 @@ unset -f write_restore_tmux_stub
 
 # ============================================================
 echo ""
+echo "=== session-restore: v2 flags and restore log ==="
+# ============================================================
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+resurrect_dir="$tmpdir/resurrect"
+mkdir -p "$tmpbin" "$resurrect_dir"
+
+cat > "$resurrect_dir/claude-panes.txt" <<'EOF'
+# tmux-claude snapshot v2
+# fields: target	tool	sid	sid_kind	cwd	original_cwd	wname	flags
+0:1.1	claude	-	none	/repo/bad		bad-pane	sid_invalid
+0:2.1	codex	019dd3be-9166-7750-8039-a1f9ecdad1f3	uuid	/repo	/repo/pruned	codex-win	cwd_collapsed
+EOF
+
+cat > "$tmpbin/tmux" <<EOF
+#!/usr/bin/env bash
+case "\$1" in
+    show-option)
+        if [ "\$4" = "@resurrect-dir" ] || [ "\$3" = "@resurrect-dir" ]; then
+            printf '%s\n' "$resurrect_dir"
+            exit 0
+        fi
+        exit 1
+        ;;
+    display-message)
+        case "\$*" in
+            *"#{pane_current_command}"*) printf '%s\n' fish ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    list-panes)
+        printf '%s\n' x
+        ;;
+    send-keys)
+        printf '%s\n' "\$*" >> "$tmpdir/send-keys.log"
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+EOF
+chmod +x "$tmpbin/tmux"
+
+ORIG_PATH="$PATH"
+PATH="$tmpbin:$PATH"
+out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+rc=$?
+PATH="$ORIG_PATH"
+log_content=$(cat "$resurrect_dir/restore.log")
+
+assert_eq "restore v2 flags dry-run exits 0" "0" "$rc"
+assert_not_contains "restore skips sid_invalid dry-run command" "[dry-run] 0:1.1:" "$out"
+assert_contains "restore logs sid_invalid skip" \
+    "SKIP 0:1.1 claude sid_invalid" "$log_content"
+assert_contains "restore dry-run includes cwd_collapsed pane" \
+    "'cxy' 'resume' '019dd3be-9166-7750-8039-a1f9ecdad1f3'" "$out"
+assert_contains "restore logs cwd_collapsed warning" \
+    "WARN 0:2.1 codex cwd_collapsed orig=/repo/pruned new=/repo" "$log_content"
+assert_contains "restore logs END counts" \
+    "END ok=0 warn=1 skip=1 total=2" "$log_content"
+
+rm -rf "$tmpdir"
+
+# ============================================================
+echo ""
 echo "=== Results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"

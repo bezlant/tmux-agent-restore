@@ -98,6 +98,12 @@ while IFS= read -r row || [ -n "$row" ]; do
     total=$((total + 1))
     printf "%-12s %-8s %-8s %s\n" "$target" "($wname)" "$tool" "$sid"
 
+    if restore_flag_has "$flags" sid_invalid; then
+        skip=$((skip + 1))
+        restore_log SKIP "$target $tool sid_invalid"
+        continue
+    fi
+
     restore_fn="${tool}_restore_argv"
     if ! declare -F "$restore_fn" >/dev/null 2>&1; then
         skip=$((skip + 1))
@@ -128,14 +134,24 @@ while IFS= read -r row || [ -n "$row" ]; do
 
     if $DRY_RUN; then
         printf "  [dry-run] %s: %s\n" "$target" "$full"
-        ok=$((ok + 1))
-        restore_log OK "target=$target tool=$tool dry_run=1"
+        if restore_flag_has "$flags" cwd_collapsed; then
+            warn=$((warn + 1))
+            restore_log WARN "$target $tool cwd_collapsed orig=$original_cwd new=$cwd"
+        else
+            ok=$((ok + 1))
+            restore_log OK "target=$target tool=$tool dry_run=1"
+        fi
         continue
     fi
 
     if restore_send_keys "$target" "$full"; then
-        ok=$((ok + 1))
-        restore_log OK "target=$target tool=$tool"
+        if restore_flag_has "$flags" cwd_collapsed; then
+            warn=$((warn + 1))
+            restore_log WARN "$target $tool cwd_collapsed orig=$original_cwd new=$cwd"
+        else
+            ok=$((ok + 1))
+            restore_log OK "target=$target tool=$tool"
+        fi
     else
         warn=$((warn + 1))
         restore_log WARN "target=$target tool=$tool send_keys_failed"
