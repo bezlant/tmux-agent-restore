@@ -36,6 +36,73 @@ adapter_sid_kind_for_agent() {
     esac
 }
 
+adapter_claude_title_uuid() {
+    local cmd="$1"
+    local cwd="$2"
+    local home="${HOME:-}"
+
+    [ -n "$cmd" ] || return 1
+    [ -n "$cwd" ] || return 1
+    [ -n "$home" ] || return 1
+    command -v python3 >/dev/null 2>&1 || return 1
+
+    python3 - "$home" "$cwd" "$cmd" <<'PY' 2>/dev/null
+import json
+import os
+import shlex
+import sys
+
+home, cwd, cmd = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    argv = shlex.split(cmd)
+except ValueError:
+    sys.exit(1)
+
+title = None
+for i, arg in enumerate(argv):
+    if arg == "--name" and i + 1 < len(argv):
+        title = argv[i + 1]
+        break
+    if arg.startswith("--name="):
+        title = arg.split("=", 1)[1]
+        break
+
+if not title:
+    sys.exit(1)
+
+project_dir = os.path.join(home, ".claude", "projects", cwd.replace("/", "-").replace(".", "-"))
+if not os.path.isdir(project_dir):
+    sys.exit(1)
+
+matches = []
+for name in os.listdir(project_dir):
+    if not name.endswith(".jsonl"):
+        continue
+    path = os.path.join(project_dir, name)
+    try:
+        with open(path) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if obj.get("type") == "custom-title":
+                    if obj.get("customTitle") == title:
+                        matches.append(name[:-6])
+                    break
+    except OSError:
+        continue
+
+if len(matches) == 1:
+    print(matches[0])
+    sys.exit(0)
+sys.exit(1)
+PY
+}
+
 adapter_detect_agent() {
     local target="$1"
     local tool="$2"
@@ -63,6 +130,8 @@ adapter_detect_agent() {
     cmd=$(process_command "$live_pid")
     uuid=$(extract_uuid "$cmd" || true)
     if [ -n "$uuid" ]; then
+        printf '%s\t%s\t%s\t%s\n' "$tool" "$uuid" "uuid" "$cwd"
+    elif [ "$tool" = "claude" ] && uuid=$(adapter_claude_title_uuid "$cmd" "$cwd"); then
         printf '%s\t%s\t%s\t%s\n' "$tool" "$uuid" "uuid" "$cwd"
     else
         printf '%s\t%s\t%s\t%s\n' "$tool" "picker" "picker" "$cwd"

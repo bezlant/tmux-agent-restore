@@ -2340,6 +2340,42 @@ assert_eq "agent_detect_from_options returns picker when live agent has no UUID"
     "$(printf 'claude\tpicker\tpicker\t/option/cwd')" \
     "$(adapter_detect_agent "%1" claude @claude_session_id @claude_session_pid @claude_cwd)"
 
+title_tmp=$(mktemp -d)
+old_home="${HOME-}"
+had_home=0
+[ "${HOME+x}" = x ] && had_home=1
+HOME="$title_tmp/home"
+mkdir -p "$HOME/.claude/projects/-option-cwd"
+cat > "$HOME/.claude/projects/-option-cwd/11111111-1111-4111-8111-111111111111.jsonl" <<'EOF'
+{"type":"custom-title","customTitle":"unique-title"}
+EOF
+cat > "$HOME/.claude/projects/-option-cwd/22222222-2222-4222-8222-222222222222.jsonl" <<'EOF'
+{"type":"custom-title","customTitle":"duplicate-title"}
+EOF
+cat > "$HOME/.claude/projects/-option-cwd/33333333-3333-4333-8333-333333333333.jsonl" <<'EOF'
+{"type":"custom-title","customTitle":"duplicate-title"}
+EOF
+MOCK_COMMAND="claude --name unique-title --dangerously-skip-permissions"
+assert_eq "agent_detect_from_options backfills unique claude title UUID" \
+    "$(printf 'claude\t11111111-1111-4111-8111-111111111111\tuuid\t/option/cwd')" \
+    "$(adapter_detect_agent "%1" claude @claude_session_id @claude_session_pid @claude_cwd)"
+
+MOCK_COMMAND="claude --name duplicate-title --dangerously-skip-permissions"
+assert_eq "agent_detect_from_options keeps picker for duplicate claude title" \
+    "$(printf 'claude\tpicker\tpicker\t/option/cwd')" \
+    "$(adapter_detect_agent "%1" claude @claude_session_id @claude_session_pid @claude_cwd)"
+
+MOCK_COMMAND="claude --name missing-title --dangerously-skip-permissions"
+assert_eq "agent_detect_from_options keeps picker for missing claude title" \
+    "$(printf 'claude\tpicker\tpicker\t/option/cwd')" \
+    "$(adapter_detect_agent "%1" claude @claude_session_id @claude_session_pid @claude_cwd)"
+if [ "$had_home" -eq 1 ]; then
+    HOME="$old_home"
+else
+    unset HOME
+fi
+rm -rf "$title_tmp"
+
 MOCK_LIVE_PID=222
 MOCK_OPTION_PID=222
 MOCK_OPTION_SID=0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf
