@@ -49,6 +49,7 @@ adapter_claude_title_uuid() {
     python3 - "$home" "$cwd" "$cmd" <<'PY' 2>/dev/null
 import json
 import os
+import re
 import shlex
 import sys
 
@@ -74,14 +75,20 @@ project_dir = os.path.join(home, ".claude", "projects", cwd.replace("/", "-").re
 if not os.path.isdir(project_dir):
     sys.exit(1)
 
+uuid_re = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 matches = []
 for name in os.listdir(project_dir):
     if not name.endswith(".jsonl"):
         continue
+    sid = name[:-6]
+    if not uuid_re.match(sid):
+        continue
     path = os.path.join(project_dir, name)
     try:
         with open(path) as fh:
-            for line in fh:
+            for line_no, line in enumerate(fh, 1):
+                if line_no > 50:
+                    break
                 line = line.strip()
                 if not line:
                     continue
@@ -91,7 +98,7 @@ for name in os.listdir(project_dir):
                     continue
                 if obj.get("type") == "custom-title":
                     if obj.get("customTitle") == title:
-                        matches.append(name[:-6])
+                        matches.append(sid)
                     break
     except OSError:
         continue

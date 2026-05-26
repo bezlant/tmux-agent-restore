@@ -2355,8 +2355,22 @@ EOF
 cat > "$HOME/.claude/projects/-option-cwd/33333333-3333-4333-8333-333333333333.jsonl" <<'EOF'
 {"type":"custom-title","customTitle":"duplicate-title"}
 EOF
+cat > "$HOME/.claude/projects/-option-cwd/not-a-uuid.jsonl" <<'EOF'
+{"type":"custom-title","customTitle":"non-uuid-title"}
+EOF
+{
+    for _i in $(seq 1 60); do
+        printf '{"type":"user","message":"filler"}\n'
+    done
+    printf '{"type":"custom-title","customTitle":"late-title"}\n'
+} > "$HOME/.claude/projects/-option-cwd/44444444-4444-4444-8444-444444444444.jsonl"
 MOCK_COMMAND="claude --name unique-title --dangerously-skip-permissions"
 assert_eq "agent_detect_from_options backfills unique claude title UUID" \
+    "$(printf 'claude\t11111111-1111-4111-8111-111111111111\tuuid\t/option/cwd')" \
+    "$(adapter_detect_agent "%1" claude @claude_session_id @claude_session_pid @claude_cwd)"
+
+MOCK_COMMAND="claude --name=unique-title --dangerously-skip-permissions"
+assert_eq "agent_detect_from_options backfills --name=value claude title UUID" \
     "$(printf 'claude\t11111111-1111-4111-8111-111111111111\tuuid\t/option/cwd')" \
     "$(adapter_detect_agent "%1" claude @claude_session_id @claude_session_pid @claude_cwd)"
 
@@ -2369,6 +2383,21 @@ MOCK_COMMAND="claude --name missing-title --dangerously-skip-permissions"
 assert_eq "agent_detect_from_options keeps picker for missing claude title" \
     "$(printf 'claude\tpicker\tpicker\t/option/cwd')" \
     "$(adapter_detect_agent "%1" claude @claude_session_id @claude_session_pid @claude_cwd)"
+
+MOCK_COMMAND="claude --name non-uuid-title --dangerously-skip-permissions"
+assert_eq "agent_detect_from_options ignores non-uuid claude title files" \
+    "$(printf 'claude\tpicker\tpicker\t/option/cwd')" \
+    "$(adapter_detect_agent "%1" claude @claude_session_id @claude_session_pid @claude_cwd)"
+
+MOCK_COMMAND="claude --name late-title --dangerously-skip-permissions"
+assert_eq "agent_detect_from_options stops scanning titleless claude files" \
+    "$(printf 'claude\tpicker\tpicker\t/option/cwd')" \
+    "$(adapter_detect_agent "%1" claude @claude_session_id @claude_session_pid @claude_cwd)"
+
+MOCK_COMMAND="codex --name unique-title"
+assert_eq "agent_detect_from_options does not backfill non-claude titles" \
+    "$(printf 'codex\tpicker\tpicker\t/option/cwd')" \
+    "$(adapter_detect_agent "%1" codex @claude_session_id @claude_session_pid @claude_cwd)"
 if [ "$had_home" -eq 1 ]; then
     HOME="$old_home"
 else
