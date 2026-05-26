@@ -45,6 +45,7 @@ if [ "$install_opt" != "off" ]; then
     fish_dir="$HOME/.config/fish/functions"
     if [ -d "$fish_dir" ]; then
         cp "$SHELL_DIR/__tmux_claude_session_args.fish" "$fish_dir/" 2>/dev/null
+        cp "$SHELL_DIR/__tmux_claude_find_session.fish" "$fish_dir/" 2>/dev/null
 
         tres_marker="# tmux-claude:tres"
         tres_target="$fish_dir/tres.fish"

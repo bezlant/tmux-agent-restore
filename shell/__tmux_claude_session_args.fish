@@ -1,5 +1,5 @@
-# tmux-claude: helper that returns --name args for session tagging.
-# Called by claude.fish wrappers (both plugin's and user's custom).
+# tmux-claude:session-name
+# Returns --resume/--name args for pane-aware session resume.
 
 function __tmux_claude_session_args
     test -z "$TMUX"; and return
@@ -27,5 +27,10 @@ function __tmux_claude_session_args
         set name "$wname.$pane"
     end
     set name (string replace -ra '[^A-Za-z0-9_.:-]' '-' -- $name)
-    printf '%s\n' --name "$name"
+    set -l sid (__tmux_claude_find_session "$name" 2>/dev/null)
+    if test -n "$sid"
+        printf '%s\n' --resume "$sid" --name "$name"
+    else
+        printf '%s\n' --name "$name"
+    end
 end

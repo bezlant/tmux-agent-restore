@@ -770,6 +770,7 @@ if command -v fish &>/dev/null; then
         local flags="$1" expected="$2"
         local result
         result=$(fish -c "
+            source $PLUGIN_DIR/shell/__tmux_claude_find_session.fish
             source $PLUGIN_DIR/shell/__tmux_claude_session_args.fish
             set -gx TMUX '/tmp/test,1,0'
             set -gx TMUX_PANE '%0'
@@ -798,6 +799,139 @@ if command -v fish &>/dev/null; then
     test_skip "--name custom" "skipped"
 else
     echo "  SKIP: fish not installed"
+fi
+
+# ============================================================
+echo ""
+echo "=== session lookup: JSONL customTitle matching ==="
+# ============================================================
+
+if command -v fish &>/dev/null && command -v python3 &>/dev/null; then
+    fixture_dir=$(mktemp -d)
+
+    # Create test JSONL files with proper customTitle entries
+    echo '{"type":"custom-title","customTitle":"redbot.2"}' > "$fixture_dir/aaaa-1111.jsonl"
+    echo '{"type":"custom-title","customTitle":"other-session"}' > "$fixture_dir/bbbb-2222.jsonl"
+    # False positive test: target appears in a non-customTitle field
+    echo '{"type":"custom-title","customTitle":"unrelated","notes":"redbot.2"}' > "$fixture_dir/cccc-3333.jsonl"
+    # Ensure mtime ordering: touch aaaa last so it's "newest"
+    sleep 0.1
+    touch "$fixture_dir/aaaa-1111.jsonl"
+
+    # Test: exact match returns correct UUID
+    result=$(fish -c "
+        source $PLUGIN_DIR/shell/__tmux_claude_find_session.fish
+        function pwd; echo /test/dir; end
+        set -l HOME_backup \$HOME
+        python3 -c \"
+import os, sys, json
+d, target = sys.argv[1], sys.argv[2]
+files = []
+for f in os.listdir(d):
+    if f.endswith('.jsonl'):
+        fp = os.path.join(d, f)
+        files.append((os.path.getmtime(fp), fp, f))
+files.sort(reverse=True)
+for _, fp, fname in files:
+    with open(fp) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line: continue
+            try: obj = json.loads(line)
+            except: continue
+            if obj.get('type') == 'custom-title':
+                if obj.get('customTitle') == target:
+                    print(fname[:-6])
+                    sys.exit(0)
+                break
+\" '$fixture_dir' 'redbot.2'
+    " 2>/dev/null)
+    assert_eq "exact match finds correct session" "aaaa-1111" "$result"
+
+    # Test: no match returns empty
+    result=$(fish -c "
+        python3 -c \"
+import os, sys, json
+d, target = sys.argv[1], sys.argv[2]
+files = []
+for f in os.listdir(d):
+    if f.endswith('.jsonl'):
+        fp = os.path.join(d, f)
+        files.append((os.path.getmtime(fp), fp, f))
+files.sort(reverse=True)
+for _, fp, fname in files:
+    with open(fp) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line: continue
+            try: obj = json.loads(line)
+            except: continue
+            if obj.get('type') == 'custom-title':
+                if obj.get('customTitle') == target:
+                    print(fname[:-6])
+                    sys.exit(0)
+                break
+\" '$fixture_dir' 'nonexistent'
+    " 2>/dev/null)
+    assert_eq "no match returns empty" "" "$result"
+
+    # Test: does NOT false-positive on target in other fields
+    result=$(fish -c "
+        python3 -c \"
+import os, sys, json
+d, target = sys.argv[1], sys.argv[2]
+files = []
+for f in os.listdir(d):
+    if f.endswith('.jsonl'):
+        fp = os.path.join(d, f)
+        files.append((os.path.getmtime(fp), fp, f))
+files.sort(reverse=True)
+for _, fp, fname in files:
+    with open(fp) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line: continue
+            try: obj = json.loads(line)
+            except: continue
+            if obj.get('type') == 'custom-title':
+                if obj.get('customTitle') == target:
+                    print(fname[:-6])
+                    sys.exit(0)
+                break
+\" '$fixture_dir' 'unrelated'
+    " 2>/dev/null)
+    assert_eq "does not false-positive on notes field" "cccc-3333" "$result"
+
+    # Test: substring of target does NOT match (redbot vs redbot.2)
+    result=$(fish -c "
+        python3 -c \"
+import os, sys, json
+d, target = sys.argv[1], sys.argv[2]
+files = []
+for f in os.listdir(d):
+    if f.endswith('.jsonl'):
+        fp = os.path.join(d, f)
+        files.append((os.path.getmtime(fp), fp, f))
+files.sort(reverse=True)
+for _, fp, fname in files:
+    with open(fp) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line: continue
+            try: obj = json.loads(line)
+            except: continue
+            if obj.get('type') == 'custom-title':
+                if obj.get('customTitle') == target:
+                    print(fname[:-6])
+                    sys.exit(0)
+                break
+\" '$fixture_dir' 'redbot'
+    " 2>/dev/null)
+    assert_eq "substring does not match (redbot vs redbot.2)" "" "$result"
+
+    rm -rf "$fixture_dir"
+else
+    echo "  SKIP: fish or python3 not installed"
 fi
 
 # ============================================================
