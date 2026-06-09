@@ -103,7 +103,6 @@ while IFS= read -r row || [ -n "$row" ]; do
     log_cwd=$(restore_log_value "$cwd")
     log_original_cwd=$(restore_log_value "$original_cwd")
     log_wname=$(restore_log_value "$wname")
-    printf "%-12s %-8s %-8s %s\n" "$log_target" "($log_wname)" "$log_tool" "$log_sid"
 
     if restore_flag_has "$flags" sid_invalid; then
         skip=$((skip + 1))
@@ -115,6 +114,7 @@ while IFS= read -r row || [ -n "$row" ]; do
         restore_log SKIP "$log_target $log_tool invalid_sid"
         continue
     fi
+    printf "%-12s %-8s %-8s %s\n" "$log_target" "($log_wname)" "$log_tool" "$log_sid"
 
     restore_fn="${tool}_restore_argv"
     if ! declare -F "$restore_fn" >/dev/null 2>&1; then

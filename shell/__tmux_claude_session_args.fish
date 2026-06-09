@@ -3,11 +3,18 @@
 
 function __tmux_claude_session_args
     test -z "$TMUX"; and return
+    set -l tmux_resume 0
     for arg in $argv
         switch $arg
+            case --tmux-resume
+                set tmux_resume 1
+                continue
             case --name '--name=*' --resume '-r' '--resume=*' --continue '-c' '--continue=*' --print '-p'
                 return
         end
+    end
+    if test "$TMUX_CLAUDE_AUTO_RESUME" = "1"
+        set tmux_resume 1
     end
     set -l wname (tmux display-message -p -t "$TMUX_PANE" '#{window_name}' 2>/dev/null)
     set -l pane_count (tmux display-message -p -t "$TMUX_PANE" '#{window_panes}' 2>/dev/null)
@@ -27,10 +34,12 @@ function __tmux_claude_session_args
         set name "$wname.$pane"
     end
     set name (string replace -ra '[^A-Za-z0-9_.:-]' '-' -- $name)
-    set -l sid (__tmux_claude_find_session "$name" 2>/dev/null)
-    if test -n "$sid"
-        printf '%s\n' --resume "$sid" --name "$name"
-    else
-        printf '%s\n' --name "$name"
+    if test "$tmux_resume" = "1"
+        set -l sid (__tmux_claude_find_session "$name" 2>/dev/null)
+        if test -n "$sid"
+            printf '%s\n' --resume "$sid" --name "$name"
+            return
+        end
     end
+    printf '%s\n' --name "$name"
 end

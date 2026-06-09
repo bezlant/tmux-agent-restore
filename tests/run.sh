@@ -40,7 +40,7 @@ assert_contains() {
 
 assert_not_contains() {
     local desc="$1" needle="$2" haystack="$3"
-    if ! echo "$haystack" | grep -qF "$needle"; then
+    if ! echo "$haystack" | grep -qF -- "$needle"; then
         green "  PASS: $desc"
         PASS=$((PASS + 1))
     else
@@ -1273,6 +1273,53 @@ if command -v fish &>/dev/null; then
         __tmux_claude_session_args
     " 2>/dev/null | tr '\n' ' ' | sed 's/ $//')
     assert_eq "empty pane_count: no suffix" "--name solo" "$result"
+else
+    echo "  SKIP: fish not installed"
+fi
+
+# ============================================================
+echo ""
+echo "=== fish wrapper: fresh by default ==="
+# ============================================================
+
+if command -v fish &>/dev/null; then
+    tmpdir=$(mktemp -d)
+    project_dir="$tmpdir/.claude/projects/-repo"
+    mkdir -p "$project_dir"
+    echo '{"type":"custom-title","customTitle":"redbot"}' > "$project_dir/session-redbot.jsonl"
+
+    run_fresh_default_args() {
+        local extra="$1"
+        local env_auto_resume="$2"
+        HOME="$tmpdir" TMUX_CLAUDE_AUTO_RESUME="$env_auto_resume" fish -c "
+            source $PLUGIN_DIR/shell/__tmux_claude_find_session.fish
+            source $PLUGIN_DIR/shell/__tmux_claude_session_args.fish
+            function pwd; echo /repo; end
+            set -gx TMUX '/tmp/test,1,0'
+            set -gx TMUX_PANE '%0'
+            function tmux
+                switch \$argv[5]
+                    case '#{window_name}'; echo redbot
+                    case '#{window_panes}'; echo 1
+                    case '#{pane_index}'; echo 1
+                end
+            end
+            __tmux_claude_session_args $extra
+        " 2>/dev/null | tr '\n' ' ' | sed 's/ $//'
+    }
+
+    result=$(run_fresh_default_args "" "")
+    assert_eq "fresh default names without resume" "--name redbot" "$result"
+
+    result=$(run_fresh_default_args "" "1")
+    assert_eq "auto-resume env resumes matching title" "--resume session-redbot --name redbot" "$result"
+
+    result=$(run_fresh_default_args "--tmux-resume" "")
+    assert_eq "auto-resume flag resumes matching title" "--resume session-redbot --name redbot" "$result"
+    assert_not_contains "internal auto-resume flag is not forwarded" "--tmux-resume" "$result"
+
+    unset -f run_fresh_default_args
+    rm -rf "$tmpdir"
 else
     echo "  SKIP: fish not installed"
 fi

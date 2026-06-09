@@ -1,5 +1,7 @@
 # tmux-claude:session-name
 # Tags Claude Code sessions with tmux pane coordinates for crash recovery.
+# By default this names a fresh session; pass --tmux-resume or set
+# TMUX_CLAUDE_AUTO_RESUME=1 to resume by matching the tmux-derived name.
 # Install both files to ~/.config/fish/functions/:
 #   cp shell/claude.fish shell/__tmux_claude_session_args.fish ~/.config/fish/functions/
 #
