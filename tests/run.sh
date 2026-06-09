@@ -2373,6 +2373,23 @@ assert_eq "agent_detect_from_options falls back to argv on stale pid" \
     "$(printf 'claude\t64d862e0-29de-44a2-a854-8aecfe22dac4\tuuid\t/option/cwd')" \
     "$(adapter_detect_agent "%1" claude @claude_session_id @claude_session_pid @claude_cwd)"
 
+adapter_test_validate_ok() { return 0; }
+adapter_test_validate_fail() { return 1; }
+
+MOCK_OPTION_PID=999
+MOCK_OPTION_SID=019ea610-ef51-7b51-8a40-6c2b946b6450
+MOCK_COMMAND="codex --yolo -s workspace-write resume"
+MOCK_EXTRACT_UUID=
+assert_eq "agent_detect_from_options trusts valid sid on stale pid when artifact exists" \
+    "$(printf 'codex\t019ea610-ef51-7b51-8a40-6c2b946b6450\tuuid\t/option/cwd\tpid_mismatch_trusted')" \
+    "$(adapter_detect_agent "%1" codex @claude_session_id @claude_session_pid @claude_cwd adapter_test_validate_ok)"
+
+assert_eq "agent_detect_from_options rejects stale pid sid when artifact is missing" \
+    "$(printf 'codex\tpicker\tpicker\t/option/cwd')" \
+    "$(adapter_detect_agent "%1" codex @claude_session_id @claude_session_pid @claude_cwd adapter_test_validate_fail)"
+
+unset -f adapter_test_validate_ok adapter_test_validate_fail
+
 MOCK_OPTION_PID=
 MOCK_OPTION_SID=0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf
 MOCK_EXTRACT_UUID=

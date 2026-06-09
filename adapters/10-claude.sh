@@ -9,7 +9,7 @@ if ! declare -F adapter_detect_agent >/dev/null 2>&1; then
 fi
 
 claude_detect() {
-    adapter_detect_agent "$1" claude @claude_session_id @claude_session_pid @claude_cwd
+    adapter_detect_agent "$1" claude @claude_session_id @claude_session_pid @claude_cwd claude_validate
 }
 
 claude_validate() {

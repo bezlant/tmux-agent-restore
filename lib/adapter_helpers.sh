@@ -116,6 +116,7 @@ adapter_detect_agent() {
     local sid_option="$3"
     local pid_option="$4"
     local cwd_option="$5"
+    local validate_fn="${6:-}"
 
     local live_pid
     live_pid=$(live_agent_pid "$target" "$tool" 2>/dev/null || true)
@@ -131,6 +132,18 @@ adapter_detect_agent() {
         option_kind=$(adapter_sid_kind_for_agent "$option_sid")
         printf '%s\t%s\t%s\t%s\n' "$tool" "$option_sid" "$option_kind" "$cwd"
         return 0
+    fi
+
+    if [ -n "$option_sid" ] && [ -n "$option_pid" ] && [ "$option_pid" != "$live_pid" ]; then
+        local option_kind
+        option_kind=$(adapter_sid_kind_for_agent "$option_sid")
+        if [ "$option_kind" = "uuid" ] &&
+            [ -n "$validate_fn" ] &&
+            declare -F "$validate_fn" >/dev/null 2>&1 &&
+            "$validate_fn" "$option_sid" "$option_kind" >/dev/null 2>&1; then
+            printf '%s\t%s\t%s\t%s\t%s\n' "$tool" "$option_sid" "$option_kind" "$cwd" "pid_mismatch_trusted"
+            return 0
+        fi
     fi
 
     local cmd uuid

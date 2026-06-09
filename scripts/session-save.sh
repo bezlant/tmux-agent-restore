@@ -150,13 +150,14 @@ while IFS= read -r session || [ -n "$session" ]; do
             sid=$(save_detect_field "$detect_row" 2)
             sid_kind=$(save_detect_field "$detect_row" 3)
             cwd=$(save_detect_field "$detect_row" 4)
+            detect_flags=$(save_detect_field "$detect_row" 5)
             if [ -z "$cwd" ]; then
                 cwd=$(tmux display-message -p -t "$target" '#{pane_current_path}' 2>/dev/null || true)
             fi
             wname=$(tmux display-message -p -t "$target" '#{window_name}' 2>/dev/null || true)
 
             original_cwd=""
-            flags=""
+            flags="$detect_flags"
 
             if [ "$sid_kind" = "uuid" ]; then
                 validate_fn="${tool}_validate"

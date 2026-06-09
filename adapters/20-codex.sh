@@ -9,7 +9,7 @@ if ! declare -F adapter_detect_agent >/dev/null 2>&1; then
 fi
 
 codex_detect() {
-    adapter_detect_agent "$1" codex @codex_session_id @codex_session_pid @codex_cwd
+    adapter_detect_agent "$1" codex @codex_session_id @codex_session_pid @codex_cwd codex_validate
 }
 
 codex_validate() {
