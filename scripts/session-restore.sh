@@ -35,7 +35,36 @@ DRY_RUN=false
 [ -s "$PANE_MAP" ] || exit 0
 
 LOCK_DIR="${RESURRECT_DIR}/.claude-restore.lock"
-if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+
+restore_lock_acquire() {
+    local stale_pid
+
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+        printf '%s\n' "$$" > "$LOCK_DIR/pid" 2>/dev/null || true
+        return 0
+    fi
+
+    stale_pid=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
+    case "$stale_pid" in
+        ''|*[!0-9]*)
+            return 1
+            ;;
+    esac
+
+    if kill -0 "$stale_pid" 2>/dev/null; then
+        return 1
+    fi
+
+    rm -rf "$LOCK_DIR"
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+        printf '%s\n' "$$" > "$LOCK_DIR/pid" 2>/dev/null || true
+        return 0
+    fi
+
+    return 1
+}
+
+if ! restore_lock_acquire; then
     restore_log_open "${RESURRECT_DIR}/restore.log"
     restore_log SKIP "restore_already_running lock=$LOCK_DIR"
     restore_log_close

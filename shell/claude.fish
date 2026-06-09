@@ -8,15 +8,25 @@
 # If you have an existing claude wrapper, just copy __tmux_claude_session_args.fish
 # and add this before your `command claude` call:
 #   set -l extra_args
+#   set -l pass_args
+#   for arg in $argv
+#       test "$arg" = "--tmux-resume"; and continue
+#       set -a pass_args $arg
+#   end
 #   if functions -q __tmux_claude_session_args
 #       set extra_args (__tmux_claude_session_args $argv)
 #   end
-#   command claude $extra_args $argv
+#   command claude $extra_args $pass_args
 
 function claude --wraps=claude --description "Claude Code with tmux session tagging"
     set -l extra_args
+    set -l pass_args
+    for arg in $argv
+        test "$arg" = "--tmux-resume"; and continue
+        set -a pass_args $arg
+    end
     if functions -q __tmux_claude_session_args
         set extra_args (__tmux_claude_session_args $argv)
     end
-    command claude $extra_args $argv
+    command claude $extra_args $pass_args
 end

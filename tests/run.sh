@@ -558,6 +558,7 @@ run_hook_fixture() {
     local tmpdir="$2"
     local session_id="$3"
     local cwd="$4"
+    local pane_command="${5:-fish}"
     local hook_pid_file="$tmpdir/hook.pid"
     local json
 
@@ -566,7 +567,7 @@ run_hook_fixture() {
     TMUX_PANE="%1" \
     TMUX_CLAUDE_PLUGIN_DIR="$tmpdir/plugin" \
     TMUX_HOOK_LOG="$tmpdir/tmux.log" \
-    TMUX_STUB_PANE_COMMAND="fish" \
+    TMUX_STUB_PANE_COMMAND="$pane_command" \
     HOME="$tmpdir/home" \
     PATH="$tmpdir/bin:$PATH" \
     HOOK_SCRIPT="$hook_script" \
@@ -606,6 +607,20 @@ else
     rm -rf "$tmpdir"
 fi
 
+if [ -f "$CLAUDE_HOOK" ]; then
+    tmpdir=$(mktemp -d)
+    setup_hook_fixture "$tmpdir"
+    run_hook_fixture "$CLAUDE_HOOK" "$tmpdir" "claude-subagent-session" "$tmpdir/cwd" "codex-aarch64-a"
+    hook_rc=$?
+    hook_log=$(cat "$tmpdir/tmux.log" 2>/dev/null || true)
+
+    assert_eq "Claude hook exits 0 inside suffixed codex pane" "0" "$hook_rc"
+    assert_not_contains "Claude hook skips suffixed codex pane" \
+        "set-option -p -t %1 @claude_session_id" "$hook_log"
+
+    rm -rf "$tmpdir"
+fi
+
 if [ ! -f "$CODEX_HOOK" ]; then
     echo "  WARN: Codex SessionStart hook missing at $CODEX_HOOK; skipping hook integration test"
 else
@@ -634,6 +649,20 @@ else
         "@codex_session_pid $$" "$hook_log"
     assert_not_contains "Codex hook does not write hook process pid as session pid" \
         "@codex_session_pid $hook_pid" "$hook_log"
+
+    rm -rf "$tmpdir"
+fi
+
+if [ -f "$CODEX_HOOK" ]; then
+    tmpdir=$(mktemp -d)
+    setup_hook_fixture "$tmpdir"
+    run_hook_fixture "$CODEX_HOOK" "$tmpdir" "codex-subagent-session" "$tmpdir/cwd" "claude-code"
+    hook_rc=$?
+    hook_log=$(cat "$tmpdir/tmux.log" 2>/dev/null || true)
+
+    assert_eq "Codex hook exits 0 inside suffixed claude pane" "0" "$hook_rc"
+    assert_not_contains "Codex hook skips suffixed claude pane" \
+        "set-option -p -t %1 @codex_session_id" "$hook_log"
 
     rm -rf "$tmpdir"
 fi
@@ -1338,6 +1367,26 @@ if command -v fish &>/dev/null; then
     result=$(run_fresh_default_args "--tmux-resume" "")
     assert_eq "auto-resume flag resumes matching title" "--resume session-redbot --name redbot" "$result"
     assert_not_contains "internal auto-resume flag is not forwarded" "--tmux-resume" "$result"
+
+    tmpbin="$tmpdir/bin"
+    mkdir -p "$tmpbin"
+    cat > "$tmpbin/claude" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$@"
+EOF
+    chmod +x "$tmpbin/claude"
+    wrapper_forwarded=$(PATH="$tmpbin:$PATH" fish -c "
+        set -gx PATH $tmpbin \$PATH
+        function __tmux_claude_session_args
+            echo --resume session-redbot
+            echo --name redbot
+        end
+        source $PLUGIN_DIR/shell/claude.fish
+        claude --tmux-resume --dangerously-skip-permissions
+    " 2>/dev/null | tr '\n' ' ' | sed 's/ $//')
+    assert_eq "claude wrapper filters internal resume flag before exec" \
+        "--resume session-redbot --name redbot --dangerously-skip-permissions" \
+        "$wrapper_forwarded"
 
     unset -f run_fresh_default_args
     rm -rf "$tmpdir"
@@ -3458,6 +3507,37 @@ assert_eq "restore lock does not send keys" \
 assert_contains "restore lock logs skip" \
     "SKIP restore_already_running" \
     "$restore_log_content"
+
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+resurrect_dir="$tmpdir/resurrect"
+send_keys_log="$tmpdir/send-keys.log"
+mkdir -p "$tmpbin" "$resurrect_dir/.claude-restore.lock"
+printf '%s\n' 999999 > "$resurrect_dir/.claude-restore.lock/pid"
+{
+    printf '# tmux-claude snapshot v2\n'
+    printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
+    printf '0:1.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/stale-lock\t\tstale-lock\t\n'
+} > "$resurrect_dir/claude-panes.txt"
+write_restore_tmux_stub "$tmpbin/tmux" "$resurrect_dir" "$send_keys_log"
+
+ORIG_PATH="$PATH"
+PATH="$tmpbin:$PATH"
+out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+rc=$?
+PATH="$ORIG_PATH"
+restore_log_content=$(cat "$resurrect_dir/restore.log" 2>/dev/null || true)
+
+assert_eq "restore stale lock exits 0" "0" "$rc"
+assert_contains "restore stale lock proceeds after reclaim" \
+    "[dry-run] 0:1.1" "$out"
+assert_not_contains "restore stale lock does not log already running" \
+    "restore_already_running" "$restore_log_content"
+assert_eq "restore stale lock cleanup removes lock" \
+    "absent" \
+    "$([ -d "$resurrect_dir/.claude-restore.lock" ] && echo present || echo absent)"
 
 rm -rf "$tmpdir"
 

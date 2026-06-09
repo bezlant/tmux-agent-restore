@@ -72,7 +72,7 @@ session_id=$(printf '%s\n' "$input" | python3 -c "import sys,json; print(json.lo
 
 pane_cmd=$(tmux display-message -p -t "$TMUX_PANE" '#{pane_current_command}' 2>/dev/null || true)
 case "$pane_cmd" in
-    codex|Codex) exit 0 ;;
+    *codex*|*Codex*|*CODEX*) exit 0 ;;
 esac
 
 tmux set-option -p -t "$TMUX_PANE" @claude_session_id "$session_id" 2>/dev/null || true
