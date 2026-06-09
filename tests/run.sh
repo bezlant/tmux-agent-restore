@@ -3415,6 +3415,35 @@ tmpdir=$(mktemp -d)
 tmpbin="$tmpdir/bin"
 resurrect_dir="$tmpdir/resurrect"
 send_keys_log="$tmpdir/send-keys.log"
+mkdir -p "$tmpbin" "$resurrect_dir/.claude-restore.lock"
+{
+    printf '# tmux-claude snapshot v2\n'
+    printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
+    printf '0:1.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/locked\t\tlocked\t\n'
+} > "$resurrect_dir/claude-panes.txt"
+write_restore_tmux_stub "$tmpbin/tmux" "$resurrect_dir" "$send_keys_log"
+
+ORIG_PATH="$PATH"
+PATH="$tmpbin:$PATH"
+out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh")
+rc=$?
+PATH="$ORIG_PATH"
+restore_log_content=$(cat "$resurrect_dir/restore.log" 2>/dev/null || true)
+
+assert_eq "restore lock exits 0" "0" "$rc"
+assert_eq "restore lock does not send keys" \
+    "absent" \
+    "$([ -f "$send_keys_log" ] && echo present || echo absent)"
+assert_contains "restore lock logs skip" \
+    "SKIP restore_already_running" \
+    "$restore_log_content"
+
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+resurrect_dir="$tmpdir/resurrect"
+send_keys_log="$tmpdir/send-keys.log"
 mkdir -p "$tmpbin" "$resurrect_dir"
 {
     printf '# tmux-claude snapshot v9\n'

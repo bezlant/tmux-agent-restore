@@ -34,13 +34,26 @@ DRY_RUN=false
 [ -f "$PANE_MAP" ] || exit 0
 [ -s "$PANE_MAP" ] || exit 0
 
-snapshot_tmp=$(mktemp "${TMPDIR:-/tmp}/tmux-claude-snapshot.XXXXXX")
-argv_tmp=$(mktemp "${TMPDIR:-/tmp}/tmux-claude-argv.XXXXXX")
+LOCK_DIR="${RESURRECT_DIR}/.claude-restore.lock"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    restore_log_open "${RESURRECT_DIR}/restore.log"
+    restore_log SKIP "restore_already_running lock=$LOCK_DIR"
+    restore_log_close
+    exit 0
+fi
+
+snapshot_tmp=""
+argv_tmp=""
 cleanup() {
-    rm -f "$snapshot_tmp" "$argv_tmp"
+    [ -n "$snapshot_tmp" ] && rm -f "$snapshot_tmp"
+    [ -n "$argv_tmp" ] && rm -f "$argv_tmp"
+    rm -rf "$LOCK_DIR"
     restore_log_close
 }
 trap cleanup EXIT HUP INT TERM
+
+snapshot_tmp=$(mktemp "${TMPDIR:-/tmp}/tmux-claude-snapshot.XXXXXX")
+argv_tmp=$(mktemp "${TMPDIR:-/tmp}/tmux-claude-argv.XXXXXX")
 
 ok=0
 warn=0
