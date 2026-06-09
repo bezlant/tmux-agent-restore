@@ -493,8 +493,8 @@ echo ""
 echo "=== SessionStart hooks: pid stamping ==="
 # ============================================================
 
-CLAUDE_HOOK="/Users/abezlyudniy/.config/claude/hooks/tmux-session-tracker.sh"
-CODEX_HOOK="/Users/abezlyudniy/.config/codex/bin/tmux-session-tracker.sh"
+CLAUDE_HOOK="$PLUGIN_DIR/scripts/claude-session-hook.sh"
+CODEX_HOOK="$PLUGIN_DIR/scripts/codex-session-hook.sh"
 
 write_hook_tmux_stub() {
     local tmux_path="$1"
@@ -530,6 +530,27 @@ setup_hook_fixture() {
     cat > "$tmpdir/plugin/lib/process.sh" <<'EOF'
 live_agent_pid() { printf '%s\n' 4242; }
 EOF
+    cat > "$tmpdir/bin/ps" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = "-axww" ] && [ "$2" = "-o" ] && [ "$3" = "pid=,ppid=,command=" ]; then
+    printf '%s\n' "100 1 fish" "4242 100 claude codex agent"
+elif [ "$1" = "-p" ] && [ "$3" = "-o" ] && [ "$4" = "ppid=" ]; then
+    case "$2" in
+        4242) printf '%s\n' 100 ;;
+        100) printf '%s\n' 1 ;;
+        *) exit 1 ;;
+    esac
+elif [ "$1" = "-p" ] && [ "$3" = "-o" ] && [ "$4" = "command=" ]; then
+    case "$2" in
+        4242) printf '%s\n' "claude codex agent" ;;
+        100) printf '%s\n' fish ;;
+        *) exit 1 ;;
+    esac
+else
+    exit 1
+fi
+EOF
+    chmod +x "$tmpdir/bin/ps"
 }
 
 run_hook_fixture() {
@@ -4250,6 +4271,11 @@ assert_contains "README documents restore.log observability" "restore.log" "$rea
 assert_contains "README documents configured resurrect dir mapping location" "configured `@resurrect-dir`" "$readme_content"
 assert_contains "README documents save/restore fallback mapping location" "~/.tmux/resurrect" "$readme_content"
 assert_contains "README documents session audit command" "session-audit.sh" "$readme_content"
+assert_contains "README documents fresh Claude default" "creates a fresh session" "$readme_content"
+assert_contains "README documents explicit tmux resume opt-in" "--tmux-resume" "$readme_content"
+assert_contains "README documents stale pid trust flag" "pid_mismatch_trusted" "$readme_content"
+assert_contains "README documents restore lock" "restore_already_running" "$readme_content"
+assert_contains "README documents audit nonzero behavior" "exits non-zero" "$readme_content"
 
 # ============================================================
 echo ""

@@ -4,7 +4,7 @@ tmux plugin for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) an
 
 Two features:
 
-1. **Auto-resume** — restarting Claude in a pane resumes the previous session instead of creating a duplicate
+1. **Stable naming** — starting Claude in a pane creates a fresh session with a tmux-derived name, with explicit opt-in resume
 2. **Save/restore** — survives tmux server restart (reboot) via tmux-resurrect integration
 
 ## Requirements
@@ -58,7 +58,7 @@ These hooks write session IDs to tmux pane variables so the plugin can map panes
 }
 ```
 
-### 2. Shell wrapper (auto-resume)
+### 2. Shell wrapper (stable naming)
 
 The plugin auto-installs the fish wrapper on `prefix + I`. For other shells:
 
@@ -78,7 +78,7 @@ set -g @tmux-claude-auto-install-wrapper off
 
 ## Features
 
-### Auto-resume
+### Stable Claude Naming
 
 Each pane gets a stable session name derived from its tmux window name:
 
@@ -88,13 +88,14 @@ Each pane gets a stable session name derived from its tmux window name:
 When you type `claude` in a pane, the wrapper:
 
 1. Computes the session name from `#{window_name}` and `#{pane_index}`
-2. Scans `~/.claude/projects/<encoded-path>/*.jsonl` for a session whose `customTitle` matches
-3. If found: passes `--resume <uuid> --name <name>` (resumes existing session)
-4. If not found: passes `--name <name>` (creates new session with that name)
+2. Passes `--name <name>`
+3. Starts a fresh session with that name
+
+To opt into tmux-name based resume, run `claude --tmux-resume` or set `TMUX_CLAUDE_AUTO_RESUME=1`. In that mode, the wrapper scans `~/.claude/projects/<encoded-path>/*.jsonl` for a session whose `customTitle` matches and passes `--resume <uuid> --name <name>` when it finds one.
 
 **Bypass**: passing `--resume`, `--continue`, `--name`, or `-p` explicitly skips the wrapper logic.
 
-**`/clear` is safe**: it clears context but keeps the same session ID, so the next launch resumes the cleared session without creating a duplicate.
+**`/clear` behavior**: `/clear` keeps the same session ID, but a plain `claude` launch is fresh by default. Use `claude --tmux-resume` only when you intentionally want the named cleared session back.
 
 ### Save/restore
 
@@ -126,7 +127,9 @@ Restore writes `restore.log` beside the snapshot with `BEGIN`, `OK`, `WARN`, `SK
 
 - Atomic save (temp file + mv) — partial saves can't corrupt the mapping
 - Zero-pane enumeration preserves the previous mapping instead of clobbering
-- Hooks clear stale pane variables when a pane switches between Claude and Codex
+- Hooks stamp both session IDs and agent PIDs, then clear stale pane variables when a pane switches between Claude and Codex
+- Stale PIDs are tolerated when the saved UUID still has a valid local Claude/Codex artifact; those rows are marked `pid_mismatch_trusted`
+- Concurrent restore runs are skipped with `restore_already_running` in `restore.log`
 
 **Manual usage:**
 
@@ -143,6 +146,8 @@ bash ~/.config/tmux/plugins/tmux-claude/scripts/session-audit.sh
 # Restore
 bash ~/.config/tmux/plugins/tmux-claude/scripts/session-restore.sh
 ```
+
+`session-audit.sh` exits non-zero when a live Claude/Codex pane would only restore as a picker or has an invalid UUID artifact.
 
 ### Post-reboot attach helper
 
@@ -173,7 +178,7 @@ set-environment -g TMUX_CLAUDE_MAX_SAVES 30
 
 Claude Code stores sessions as JSONL files in `~/.claude/projects/<encoded-path>/`. The path is encoded by replacing `/` and `.` with `-` (e.g., `/Users/foo/my.project` → `-Users-foo-my-project`).
 
-Each JSONL file starts with a `{"type":"custom-title","customTitle":"..."}` entry set at creation time. The auto-resume lookup scans these files (sorted newest-first by mtime) and returns the first UUID whose `customTitle` matches the computed pane name.
+Each JSONL file starts with a `{"type":"custom-title","customTitle":"..."}` entry set at creation time. The optional `--tmux-resume` lookup scans these files (sorted newest-first by mtime) and returns the first UUID whose `customTitle` matches the computed pane name.
 
 This avoids:
 
