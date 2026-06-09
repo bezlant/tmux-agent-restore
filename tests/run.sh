@@ -4156,6 +4156,90 @@ fi
 
 # ============================================================
 echo ""
+echo "=== session-audit: live pane report ==="
+# ============================================================
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+tmphome="$tmpdir/home"
+mkdir -p "$tmpbin" "$tmphome/.codex/sessions"
+
+audit_sid="019ea610-ef51-7b51-8a40-6c2b946b6450"
+touch "$tmphome/.codex/sessions/rollout-test-${audit_sid}.jsonl"
+
+cat > "$tmpbin/tmux" <<EOF
+#!/usr/bin/env bash
+case "\$1" in
+    list-sessions)
+        printf '%s\n' 0
+        ;;
+    list-windows)
+        printf '%s\n' 1
+        ;;
+    list-panes)
+        printf '%s\n' 1
+        ;;
+    display-message)
+        case "\$*" in
+            *"#{window_name}"*) printf '%s\n' audit ;;
+            *"#{pane_current_command}"*) printf '%s\n' codex-aarch64-a ;;
+            *"#{pane_current_path}"*) printf '%s\n' /repo ;;
+            *"#{pane_pid}"*) printf '%s\n' 100 ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    show-options)
+        option=""
+        while [ "\$#" -gt 0 ]; do
+            if [ "\$1" = "-v" ]; then
+                shift
+                option="\${1:-}"
+                break
+            fi
+            shift
+        done
+        case "\$option" in
+            @codex_session_id) printf '%s\n' "$audit_sid" ;;
+            @codex_session_pid) printf '%s\n' 999 ;;
+            @codex_cwd) printf '%s\n' /repo ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+EOF
+chmod +x "$tmpbin/tmux"
+
+cat > "$tmpbin/ps" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = "-axww" ] && [ "$2" = "-o" ] && [ "$3" = "pid=,ppid=,command=" ]; then
+    printf '%s\n' "100 1 fish" "200 100 codex --yolo -s workspace-write resume"
+elif [ "$1" = "-p" ] && [ "$3" = "-o" ] && [ "$4" = "command=" ]; then
+    printf '%s\n' "codex --yolo -s workspace-write resume"
+else
+    exit 1
+fi
+EOF
+chmod +x "$tmpbin/ps"
+
+old_path="$PATH"
+PATH="$tmpbin:$PATH"
+audit_output=$(HOME="$tmphome" bash "$PLUGIN_DIR/scripts/session-audit.sh" 2>&1)
+audit_rc=$?
+PATH="$old_path"
+
+assert_eq "audit exits 0 for UUID-restorable pane" "0" "$audit_rc"
+assert_contains "audit reports target" "0:1.1" "$audit_output"
+assert_contains "audit reports codex tool" "codex" "$audit_output"
+assert_contains "audit reports codex uuid" "$audit_sid" "$audit_output"
+assert_contains "audit reports pid mismatch trusted" "pid_mismatch_trusted" "$audit_output"
+
+rm -rf "$tmpdir"
+
+# ============================================================
+echo ""
 echo "=== README: tres and v2 snapshot docs ==="
 # ============================================================
 
@@ -4165,6 +4249,7 @@ assert_contains "README documents v2 snapshot format" "snapshot v2" "$readme_con
 assert_contains "README documents restore.log observability" "restore.log" "$readme_content"
 assert_contains "README documents configured resurrect dir mapping location" "configured `@resurrect-dir`" "$readme_content"
 assert_contains "README documents save/restore fallback mapping location" "~/.tmux/resurrect" "$readme_content"
+assert_contains "README documents session audit command" "session-audit.sh" "$readme_content"
 
 # ============================================================
 echo ""

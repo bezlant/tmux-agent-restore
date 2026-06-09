@@ -137,6 +137,9 @@ bash ~/.config/tmux/plugins/tmux-claude/scripts/session-save.sh
 # Preview what restore would do
 bash ~/.config/tmux/plugins/tmux-claude/scripts/session-restore.sh --dry-run
 
+# Audit every live tmux pane for restore readiness
+bash ~/.config/tmux/plugins/tmux-claude/scripts/session-audit.sh
+
 # Restore
 bash ~/.config/tmux/plugins/tmux-claude/scripts/session-restore.sh
 ```
