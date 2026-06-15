@@ -642,11 +642,14 @@ else
         "set-option -p -t %1 @claude_session_pid 4242" "$hook_log"
     assert_contains "Claude hook sets @claude_cwd" \
         "set-option -p -t %1 @claude_cwd $claude_cwd" "$hook_log"
-    assert_contains "Claude hook clears @codex_session_id" \
+    # Coexistence: the hook must NOT clear the other tool's vars. A pane can host
+    # both tools; clearing would wipe a live session id and degrade restore to a
+    # picker. The saver disambiguates by foreground + live process instead.
+    assert_not_contains "Claude hook does not clear @codex_session_id" \
         "set-option -pu -t %1 @codex_session_id" "$hook_log"
-    assert_contains "Claude hook clears @codex_cwd" \
+    assert_not_contains "Claude hook does not clear @codex_cwd" \
         "set-option -pu -t %1 @codex_cwd" "$hook_log"
-    assert_contains "Claude hook clears @codex_session_pid" \
+    assert_not_contains "Claude hook does not clear @codex_session_pid" \
         "set-option -pu -t %1 @codex_session_pid" "$hook_log"
     assert_not_contains "Claude hook does not write test runner pid as session pid" \
         "@claude_session_pid $$" "$hook_log"
@@ -688,11 +691,12 @@ else
         "set-option -p -t %1 @codex_session_pid 4242" "$hook_log"
     assert_contains "Codex hook sets @codex_cwd" \
         "set-option -p -t %1 @codex_cwd $codex_cwd" "$hook_log"
-    assert_contains "Codex hook clears @claude_session_id" \
+    # Coexistence: the hook must NOT clear the other tool's vars (see Claude case).
+    assert_not_contains "Codex hook does not clear @claude_session_id" \
         "set-option -pu -t %1 @claude_session_id" "$hook_log"
-    assert_contains "Codex hook clears @claude_cwd" \
+    assert_not_contains "Codex hook does not clear @claude_cwd" \
         "set-option -pu -t %1 @claude_cwd" "$hook_log"
-    assert_contains "Codex hook clears @claude_session_pid" \
+    assert_not_contains "Codex hook does not clear @claude_session_pid" \
         "set-option -pu -t %1 @claude_session_pid" "$hook_log"
     assert_not_contains "Codex hook does not write test runner pid as session pid" \
         "@codex_session_pid $$" "$hook_log"
@@ -1277,38 +1281,31 @@ rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
-echo "=== stale pane option clearing ==="
+echo "=== pane option coexistence (no cross-tool clearing) ==="
 # ============================================================
 
 if [ -n "$TMUX" ]; then
     test_pane=$(tmux display-message -p '#{pane_id}')
 
-    tmux set-option -p -t "$test_pane" @claude_session_id "old-claude-id" 2>/dev/null
-    tmux set-option -p -t "$test_pane" @claude_cwd "/old/claude" 2>/dev/null
-    tmux set-option -p -t "$test_pane" @codex_session_id "old-codex-id" 2>/dev/null
-    tmux set-option -p -t "$test_pane" @codex_cwd "/old/codex" 2>/dev/null
+    # New design: each tracker sets only its own vars and never clears the other
+    # tool's. A pane that hosted both tools must keep both ids so the saver can
+    # pick by foreground; clearing was the source of the churn/picker bug.
+    tmux set-option -p -t "$test_pane" @claude_session_id "claude-id" 2>/dev/null
+    tmux set-option -p -t "$test_pane" @codex_session_id "codex-id" 2>/dev/null
 
-    # Simulate Claude hook: sets claude, clears codex
-    tmux set-option -p -t "$test_pane" @claude_session_id "new-claude-id" 2>/dev/null
-    tmux set-option -pu -t "$test_pane" @codex_session_id 2>/dev/null
-    tmux set-option -pu -t "$test_pane" @codex_cwd 2>/dev/null
-
+    # Claude restarts in the pane: it restamps only its own id.
+    tmux set-option -p -t "$test_pane" @claude_session_id "claude-id-2" 2>/dev/null
     claude_val=$(tmux show-options -p -t "$test_pane" -v @claude_session_id 2>/dev/null || true)
     codex_val=$(tmux show-options -p -t "$test_pane" -v @codex_session_id 2>/dev/null || true)
+    assert_eq "claude restamp updates own id" "claude-id-2" "$claude_val"
+    assert_eq "claude restamp leaves codex id intact" "codex-id" "$codex_val"
 
-    assert_eq "claude hook sets claude_session_id" "new-claude-id" "$claude_val"
-    assert_eq "claude hook clears codex_session_id" "" "$codex_val"
-
-    # Simulate Codex hook: sets codex, clears claude
-    tmux set-option -p -t "$test_pane" @codex_session_id "new-codex-id" 2>/dev/null
-    tmux set-option -pu -t "$test_pane" @claude_session_id 2>/dev/null
-    tmux set-option -pu -t "$test_pane" @claude_cwd 2>/dev/null
-
+    # Codex restarts in the same pane: it restamps only its own id.
+    tmux set-option -p -t "$test_pane" @codex_session_id "codex-id-2" 2>/dev/null
     claude_val=$(tmux show-options -p -t "$test_pane" -v @claude_session_id 2>/dev/null || true)
     codex_val=$(tmux show-options -p -t "$test_pane" -v @codex_session_id 2>/dev/null || true)
-
-    assert_eq "codex hook clears claude_session_id" "" "$claude_val"
-    assert_eq "codex hook sets codex_session_id" "new-codex-id" "$codex_val"
+    assert_eq "codex restamp leaves claude id intact" "claude-id-2" "$claude_val"
+    assert_eq "codex restamp updates own id" "codex-id-2" "$codex_val"
 
     # Cleanup
     tmux set-option -pu -t "$test_pane" @claude_session_id 2>/dev/null

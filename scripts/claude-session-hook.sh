@@ -87,9 +87,12 @@ if declare -F live_agent_pid >/dev/null 2>&1; then
         tmux set-option -p -t "$TMUX_PANE" @claude_session_pid "$agent_pid" 2>/dev/null || true
     fi
 fi
-tmux set-option -pu -t "$TMUX_PANE" @codex_session_id 2>/dev/null || true
-tmux set-option -pu -t "$TMUX_PANE" @codex_cwd 2>/dev/null || true
-tmux set-option -pu -t "$TMUX_PANE" @codex_session_pid 2>/dev/null || true
+# Intentionally do NOT clear the @codex_* vars here. A pane can host both tools
+# over its life (e.g. Claude runs a Codex teammate in-pane); clearing the other
+# tool's vars would wipe a live session id whenever the foreground briefly
+# flipped, leaving that pane to restore as a picker. session-save.sh
+# disambiguates by the pane's foreground command and only uses a var when a
+# matching live agent exists, so stale vars are harmless and coexistence is safe.
 
 cwd=$(printf '%s\n' "$input" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cwd',''))" 2>/dev/null || true)
 [ -n "$cwd" ] && tmux set-option -p -t "$TMUX_PANE" @claude_cwd "$cwd" 2>/dev/null || true

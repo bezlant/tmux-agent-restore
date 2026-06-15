@@ -127,7 +127,7 @@ Restore writes `restore.log` beside the snapshot with `BEGIN`, `OK`, `WARN`, `SK
 
 - Atomic save (temp file + mv) — partial saves can't corrupt the mapping
 - Zero-pane enumeration preserves the previous mapping instead of clobbering
-- Hooks stamp both session IDs and agent PIDs, then clear stale pane variables when a pane switches between Claude and Codex
+- Hooks stamp each tool's own session ID and agent PID and never clear the other tool's variables, so a pane that hosts both Claude and Codex keeps both IDs; the saver disambiguates by the pane's foreground command and only uses a variable when a matching live agent exists. (Clearing the other tool's vars used to wipe a live session whenever the foreground briefly flipped, degrading restore to a picker.)
 - Stale PIDs are tolerated when the saved UUID still has a valid local Claude/Codex artifact; those rows are marked `pid_mismatch_trusted`
 - Concurrent restore runs are skipped with `restore_already_running` in `restore.log`
 
