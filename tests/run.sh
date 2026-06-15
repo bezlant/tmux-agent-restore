@@ -486,6 +486,55 @@ for recipe in claude codex nvim; do
     rm -rf "$tmpdir"
 done
 
+# Regression: a codex pane whose foreground command is the real suffixed binary
+# name ("codex-aarch64-a") AND has a live claude subagent in its process tree
+# must still be saved as codex (via its valid @codex_session_id), not degraded
+# to "claude picker". Before save_pane_adapter_hint matched suffixed names, the
+# hint was dropped and adapter order (claude first) misclassified the pane.
+tmpdir=$(mktemp -d)
+mkdir -p "$tmpdir/bin" "$tmpdir/resurrect" "$tmpdir/home" "$tmpdir/project"
+mkdir -p "$tmpdir/home/.codex/sessions/2026/06/15"
+: > "$tmpdir/home/.codex/sessions/2026/06/15/rollout-2026-06-15T000000-$CODEX_UUID_SAVE.jsonl"
+printf '%s\n' "$tmpdir/resurrect" > "$tmpdir/resurrect_dir"
+printf '%s\n' "0" > "$tmpdir/sessions"
+printf '%s\n' "1" > "$tmpdir/windows"
+printf '%s\n' "1" > "$tmpdir/panes"
+printf '%s\n' "work-win" > "$tmpdir/window_name"
+printf '%s\n' "100" > "$tmpdir/pane_pid"
+printf '%s\n' "$tmpdir/project" > "$tmpdir/pane_current_path"
+printf '%s\n' "codex-aarch64-a" > "$tmpdir/pane_current_command"
+printf '%s\n' "$CODEX_UUID_SAVE" > "$tmpdir/codex_session_id"
+: > "$tmpdir/codex_session_pid"
+printf '%s\n' "$tmpdir/project" > "$tmpdir/codex_cwd"
+# Two live agents under the same pane shell: codex primary + claude subagent.
+{
+    printf ' 100     1 fish\n'
+    printf ' 200   100 codex-aarch64-a --yolo -s workspace-write\n'
+    printf ' 300   100 claude --dangerously-skip-permissions\n'
+} > "$tmpdir/ps_tree"
+write_save_tmux_stub "$tmpdir/bin/tmux" "$tmpdir"
+cat > "$tmpdir/bin/ps" <<EOF
+#!/usr/bin/env bash
+fixture_dir='$tmpdir'
+if [ "\$1" = "-axww" ] && [ "\$2" = "-o" ] && [ "\$3" = "pid=,ppid=,command=" ]; then
+    cat "\$fixture_dir/ps_tree"
+elif [ "\$1" = "-p" ] && [ "\$3" = "-o" ] && [ "\$4" = "command=" ]; then
+    case "\$2" in
+        200) printf '%s\n' "codex-aarch64-a --yolo -s workspace-write" ;;
+        300) printf '%s\n' "claude --dangerously-skip-permissions" ;;
+        *) exit 1 ;;
+    esac
+else
+    exit 1
+fi
+EOF
+chmod +x "$tmpdir/bin/ps"
+run_save_fixture "$tmpdir"
+row=$(snapshot_read "$tmpdir/resurrect/claude-panes.txt" 2>/dev/null)
+assert_eq "save_suffixed_codex_with_claude_subagent tool" "codex" "$(printf '%s' "$row" | cut -f2)"
+assert_eq "save_suffixed_codex_with_claude_subagent sid" "$CODEX_UUID_SAVE" "$(printf '%s' "$row" | cut -f3)"
+rm -rf "$tmpdir"
+
 unset -f write_save_tmux_stub write_save_ps_stub setup_save_fixture setup_save_just_recipe_fixture run_save_fixture run_restore_fixture
 
 # ============================================================

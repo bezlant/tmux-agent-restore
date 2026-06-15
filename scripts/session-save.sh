@@ -76,9 +76,20 @@ save_pane_adapter_hint() {
     local target="$1"
     local cmd adapter
     cmd=$(tmux display-message -p -t "$target" '#{pane_current_command}' 2>/dev/null || true)
+    # The foreground command is the real binary name, e.g. "codex-aarch64-a" or
+    # "claude.exe", never a bare "codex"/"claude". Match substrings so the hint
+    # picks the adapter for the pane's actual foreground tool; otherwise the
+    # hint is dropped and detection falls back to adapter order (claude first),
+    # which can misclassify a codex pane that has a live claude subagent.
     case "$cmd" in
         vim|nvim)
             adapter="nvim"
+            ;;
+        *codex*|*Codex*|*CODEX*)
+            adapter="codex"
+            ;;
+        *claude*|*Claude*|*CLAUDE*)
+            adapter="claude"
             ;;
         *)
             adapter="$cmd"
