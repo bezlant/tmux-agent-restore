@@ -535,6 +535,54 @@ assert_eq "save_suffixed_codex_with_claude_subagent tool" "codex" "$(printf '%s'
 assert_eq "save_suffixed_codex_with_claude_subagent sid" "$CODEX_UUID_SAVE" "$(printf '%s' "$row" | cut -f3)"
 rm -rf "$tmpdir"
 
+# Coexistence safety: a pane may carry BOTH @claude_session_id and
+# @codex_session_id (hooks no longer clear the other tool's vars). With only a
+# live claude in the pane, save must use the claude session and ignore the stale
+# codex var — the invariant that makes not-clearing safe.
+tmpdir=$(mktemp -d)
+mkdir -p "$tmpdir/bin" "$tmpdir/resurrect" "$tmpdir/home" "$tmpdir/project"
+mkdir -p "$tmpdir/home/.claude/projects/work" "$tmpdir/home/.codex/sessions/2026/06/15"
+: > "$tmpdir/home/.claude/projects/work/$CLAUDE_UUID_SAVE.jsonl"
+: > "$tmpdir/home/.codex/sessions/2026/06/15/rollout-2026-06-15T000000-$CODEX_UUID_SAVE.jsonl"
+printf '%s\n' "$tmpdir/resurrect" > "$tmpdir/resurrect_dir"
+printf '%s\n' "0" > "$tmpdir/sessions"
+printf '%s\n' "1" > "$tmpdir/windows"
+printf '%s\n' "1" > "$tmpdir/panes"
+printf '%s\n' "work-win" > "$tmpdir/window_name"
+printf '%s\n' "100" > "$tmpdir/pane_pid"
+printf '%s\n' "$tmpdir/project" > "$tmpdir/pane_current_path"
+printf '%s\n' "claude.exe" > "$tmpdir/pane_current_command"
+# Both tools' vars present; only claude is live in the process tree.
+printf '%s\n' "$CLAUDE_UUID_SAVE" > "$tmpdir/claude_session_id"
+: > "$tmpdir/claude_session_pid"
+printf '%s\n' "$tmpdir/project" > "$tmpdir/claude_cwd"
+printf '%s\n' "$CODEX_UUID_SAVE" > "$tmpdir/codex_session_id"
+: > "$tmpdir/codex_session_pid"
+printf '%s\n' "$tmpdir/project" > "$tmpdir/codex_cwd"
+printf ' 100     1 fish\n 200   100 claude.exe --resume %s\n' "$CLAUDE_UUID_SAVE" > "$tmpdir/ps_tree"
+write_save_tmux_stub "$tmpdir/bin/tmux" "$tmpdir"
+cat > "$tmpdir/bin/ps" <<EOF
+#!/usr/bin/env bash
+fixture_dir='$tmpdir'
+if [ "\$1" = "-axww" ] && [ "\$2" = "-o" ] && [ "\$3" = "pid=,ppid=,command=" ]; then
+    cat "\$fixture_dir/ps_tree"
+elif [ "\$1" = "-p" ] && [ "\$3" = "-o" ] && [ "\$4" = "command=" ]; then
+    case "\$2" in
+        200) printf '%s\n' "claude.exe --resume $CLAUDE_UUID_SAVE" ;;
+        *) exit 1 ;;
+    esac
+else
+    exit 1
+fi
+EOF
+chmod +x "$tmpdir/bin/ps"
+run_save_fixture "$tmpdir"
+row=$(snapshot_read "$tmpdir/resurrect/claude-panes.txt" 2>/dev/null)
+assert_eq "save_coexisting_vars_uses_live_tool tool" "claude" "$(printf '%s' "$row" | cut -f2)"
+assert_eq "save_coexisting_vars_uses_live_tool sid" "$CLAUDE_UUID_SAVE" "$(printf '%s' "$row" | cut -f3)"
+assert_eq "save_coexisting_vars_one_row_only" "1" "$(printf '%s\n' "$row" | grep -c .)"
+rm -rf "$tmpdir"
+
 unset -f write_save_tmux_stub write_save_ps_stub setup_save_fixture setup_save_just_recipe_fixture run_save_fixture run_restore_fixture
 
 # ============================================================
