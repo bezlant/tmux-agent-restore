@@ -486,6 +486,103 @@ for recipe in claude codex nvim; do
     rm -rf "$tmpdir"
 done
 
+# Regression: a codex pane whose foreground command is the real suffixed binary
+# name ("codex-aarch64-a") AND has a live claude subagent in its process tree
+# must still be saved as codex (via its valid @codex_session_id), not degraded
+# to "claude picker". Before save_pane_adapter_hint matched suffixed names, the
+# hint was dropped and adapter order (claude first) misclassified the pane.
+tmpdir=$(mktemp -d)
+mkdir -p "$tmpdir/bin" "$tmpdir/resurrect" "$tmpdir/home" "$tmpdir/project"
+mkdir -p "$tmpdir/home/.codex/sessions/2026/06/15"
+: > "$tmpdir/home/.codex/sessions/2026/06/15/rollout-2026-06-15T000000-$CODEX_UUID_SAVE.jsonl"
+printf '%s\n' "$tmpdir/resurrect" > "$tmpdir/resurrect_dir"
+printf '%s\n' "0" > "$tmpdir/sessions"
+printf '%s\n' "1" > "$tmpdir/windows"
+printf '%s\n' "1" > "$tmpdir/panes"
+printf '%s\n' "work-win" > "$tmpdir/window_name"
+printf '%s\n' "100" > "$tmpdir/pane_pid"
+printf '%s\n' "$tmpdir/project" > "$tmpdir/pane_current_path"
+printf '%s\n' "codex-aarch64-a" > "$tmpdir/pane_current_command"
+printf '%s\n' "$CODEX_UUID_SAVE" > "$tmpdir/codex_session_id"
+: > "$tmpdir/codex_session_pid"
+printf '%s\n' "$tmpdir/project" > "$tmpdir/codex_cwd"
+# Two live agents under the same pane shell: codex primary + claude subagent.
+{
+    printf ' 100     1 fish\n'
+    printf ' 200   100 codex-aarch64-a --yolo -s workspace-write\n'
+    printf ' 300   100 claude --dangerously-skip-permissions\n'
+} > "$tmpdir/ps_tree"
+write_save_tmux_stub "$tmpdir/bin/tmux" "$tmpdir"
+cat > "$tmpdir/bin/ps" <<EOF
+#!/usr/bin/env bash
+fixture_dir='$tmpdir'
+if [ "\$1" = "-axww" ] && [ "\$2" = "-o" ] && [ "\$3" = "pid=,ppid=,command=" ]; then
+    cat "\$fixture_dir/ps_tree"
+elif [ "\$1" = "-p" ] && [ "\$3" = "-o" ] && [ "\$4" = "command=" ]; then
+    case "\$2" in
+        200) printf '%s\n' "codex-aarch64-a --yolo -s workspace-write" ;;
+        300) printf '%s\n' "claude --dangerously-skip-permissions" ;;
+        *) exit 1 ;;
+    esac
+else
+    exit 1
+fi
+EOF
+chmod +x "$tmpdir/bin/ps"
+run_save_fixture "$tmpdir"
+row=$(snapshot_read "$tmpdir/resurrect/claude-panes.txt" 2>/dev/null)
+assert_eq "save_suffixed_codex_with_claude_subagent tool" "codex" "$(printf '%s' "$row" | cut -f2)"
+assert_eq "save_suffixed_codex_with_claude_subagent sid" "$CODEX_UUID_SAVE" "$(printf '%s' "$row" | cut -f3)"
+rm -rf "$tmpdir"
+
+# Coexistence safety: a pane may carry BOTH @claude_session_id and
+# @codex_session_id (hooks no longer clear the other tool's vars). With only a
+# live claude in the pane, save must use the claude session and ignore the stale
+# codex var — the invariant that makes not-clearing safe.
+tmpdir=$(mktemp -d)
+mkdir -p "$tmpdir/bin" "$tmpdir/resurrect" "$tmpdir/home" "$tmpdir/project"
+mkdir -p "$tmpdir/home/.claude/projects/work" "$tmpdir/home/.codex/sessions/2026/06/15"
+: > "$tmpdir/home/.claude/projects/work/$CLAUDE_UUID_SAVE.jsonl"
+: > "$tmpdir/home/.codex/sessions/2026/06/15/rollout-2026-06-15T000000-$CODEX_UUID_SAVE.jsonl"
+printf '%s\n' "$tmpdir/resurrect" > "$tmpdir/resurrect_dir"
+printf '%s\n' "0" > "$tmpdir/sessions"
+printf '%s\n' "1" > "$tmpdir/windows"
+printf '%s\n' "1" > "$tmpdir/panes"
+printf '%s\n' "work-win" > "$tmpdir/window_name"
+printf '%s\n' "100" > "$tmpdir/pane_pid"
+printf '%s\n' "$tmpdir/project" > "$tmpdir/pane_current_path"
+printf '%s\n' "claude.exe" > "$tmpdir/pane_current_command"
+# Both tools' vars present; only claude is live in the process tree.
+printf '%s\n' "$CLAUDE_UUID_SAVE" > "$tmpdir/claude_session_id"
+: > "$tmpdir/claude_session_pid"
+printf '%s\n' "$tmpdir/project" > "$tmpdir/claude_cwd"
+printf '%s\n' "$CODEX_UUID_SAVE" > "$tmpdir/codex_session_id"
+: > "$tmpdir/codex_session_pid"
+printf '%s\n' "$tmpdir/project" > "$tmpdir/codex_cwd"
+printf ' 100     1 fish\n 200   100 claude.exe --resume %s\n' "$CLAUDE_UUID_SAVE" > "$tmpdir/ps_tree"
+write_save_tmux_stub "$tmpdir/bin/tmux" "$tmpdir"
+cat > "$tmpdir/bin/ps" <<EOF
+#!/usr/bin/env bash
+fixture_dir='$tmpdir'
+if [ "\$1" = "-axww" ] && [ "\$2" = "-o" ] && [ "\$3" = "pid=,ppid=,command=" ]; then
+    cat "\$fixture_dir/ps_tree"
+elif [ "\$1" = "-p" ] && [ "\$3" = "-o" ] && [ "\$4" = "command=" ]; then
+    case "\$2" in
+        200) printf '%s\n' "claude.exe --resume $CLAUDE_UUID_SAVE" ;;
+        *) exit 1 ;;
+    esac
+else
+    exit 1
+fi
+EOF
+chmod +x "$tmpdir/bin/ps"
+run_save_fixture "$tmpdir"
+row=$(snapshot_read "$tmpdir/resurrect/claude-panes.txt" 2>/dev/null)
+assert_eq "save_coexisting_vars_uses_live_tool tool" "claude" "$(printf '%s' "$row" | cut -f2)"
+assert_eq "save_coexisting_vars_uses_live_tool sid" "$CLAUDE_UUID_SAVE" "$(printf '%s' "$row" | cut -f3)"
+assert_eq "save_coexisting_vars_one_row_only" "1" "$(printf '%s\n' "$row" | grep -c .)"
+rm -rf "$tmpdir"
+
 unset -f write_save_tmux_stub write_save_ps_stub setup_save_fixture setup_save_just_recipe_fixture run_save_fixture run_restore_fixture
 
 # ============================================================
@@ -593,11 +690,14 @@ else
         "set-option -p -t %1 @claude_session_pid 4242" "$hook_log"
     assert_contains "Claude hook sets @claude_cwd" \
         "set-option -p -t %1 @claude_cwd $claude_cwd" "$hook_log"
-    assert_contains "Claude hook clears @codex_session_id" \
+    # Coexistence: the hook must NOT clear the other tool's vars. A pane can host
+    # both tools; clearing would wipe a live session id and degrade restore to a
+    # picker. The saver disambiguates by foreground + live process instead.
+    assert_not_contains "Claude hook does not clear @codex_session_id" \
         "set-option -pu -t %1 @codex_session_id" "$hook_log"
-    assert_contains "Claude hook clears @codex_cwd" \
+    assert_not_contains "Claude hook does not clear @codex_cwd" \
         "set-option -pu -t %1 @codex_cwd" "$hook_log"
-    assert_contains "Claude hook clears @codex_session_pid" \
+    assert_not_contains "Claude hook does not clear @codex_session_pid" \
         "set-option -pu -t %1 @codex_session_pid" "$hook_log"
     assert_not_contains "Claude hook does not write test runner pid as session pid" \
         "@claude_session_pid $$" "$hook_log"
@@ -639,11 +739,12 @@ else
         "set-option -p -t %1 @codex_session_pid 4242" "$hook_log"
     assert_contains "Codex hook sets @codex_cwd" \
         "set-option -p -t %1 @codex_cwd $codex_cwd" "$hook_log"
-    assert_contains "Codex hook clears @claude_session_id" \
+    # Coexistence: the hook must NOT clear the other tool's vars (see Claude case).
+    assert_not_contains "Codex hook does not clear @claude_session_id" \
         "set-option -pu -t %1 @claude_session_id" "$hook_log"
-    assert_contains "Codex hook clears @claude_cwd" \
+    assert_not_contains "Codex hook does not clear @claude_cwd" \
         "set-option -pu -t %1 @claude_cwd" "$hook_log"
-    assert_contains "Codex hook clears @claude_session_pid" \
+    assert_not_contains "Codex hook does not clear @claude_session_pid" \
         "set-option -pu -t %1 @claude_session_pid" "$hook_log"
     assert_not_contains "Codex hook does not write test runner pid as session pid" \
         "@codex_session_pid $$" "$hook_log"
@@ -1228,38 +1329,31 @@ rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
-echo "=== stale pane option clearing ==="
+echo "=== pane option coexistence (no cross-tool clearing) ==="
 # ============================================================
 
 if [ -n "$TMUX" ]; then
     test_pane=$(tmux display-message -p '#{pane_id}')
 
-    tmux set-option -p -t "$test_pane" @claude_session_id "old-claude-id" 2>/dev/null
-    tmux set-option -p -t "$test_pane" @claude_cwd "/old/claude" 2>/dev/null
-    tmux set-option -p -t "$test_pane" @codex_session_id "old-codex-id" 2>/dev/null
-    tmux set-option -p -t "$test_pane" @codex_cwd "/old/codex" 2>/dev/null
+    # New design: each tracker sets only its own vars and never clears the other
+    # tool's. A pane that hosted both tools must keep both ids so the saver can
+    # pick by foreground; clearing was the source of the churn/picker bug.
+    tmux set-option -p -t "$test_pane" @claude_session_id "claude-id" 2>/dev/null
+    tmux set-option -p -t "$test_pane" @codex_session_id "codex-id" 2>/dev/null
 
-    # Simulate Claude hook: sets claude, clears codex
-    tmux set-option -p -t "$test_pane" @claude_session_id "new-claude-id" 2>/dev/null
-    tmux set-option -pu -t "$test_pane" @codex_session_id 2>/dev/null
-    tmux set-option -pu -t "$test_pane" @codex_cwd 2>/dev/null
-
+    # Claude restarts in the pane: it restamps only its own id.
+    tmux set-option -p -t "$test_pane" @claude_session_id "claude-id-2" 2>/dev/null
     claude_val=$(tmux show-options -p -t "$test_pane" -v @claude_session_id 2>/dev/null || true)
     codex_val=$(tmux show-options -p -t "$test_pane" -v @codex_session_id 2>/dev/null || true)
+    assert_eq "claude restamp updates own id" "claude-id-2" "$claude_val"
+    assert_eq "claude restamp leaves codex id intact" "codex-id" "$codex_val"
 
-    assert_eq "claude hook sets claude_session_id" "new-claude-id" "$claude_val"
-    assert_eq "claude hook clears codex_session_id" "" "$codex_val"
-
-    # Simulate Codex hook: sets codex, clears claude
-    tmux set-option -p -t "$test_pane" @codex_session_id "new-codex-id" 2>/dev/null
-    tmux set-option -pu -t "$test_pane" @claude_session_id 2>/dev/null
-    tmux set-option -pu -t "$test_pane" @claude_cwd 2>/dev/null
-
+    # Codex restarts in the same pane: it restamps only its own id.
+    tmux set-option -p -t "$test_pane" @codex_session_id "codex-id-2" 2>/dev/null
     claude_val=$(tmux show-options -p -t "$test_pane" -v @claude_session_id 2>/dev/null || true)
     codex_val=$(tmux show-options -p -t "$test_pane" -v @codex_session_id 2>/dev/null || true)
-
-    assert_eq "codex hook clears claude_session_id" "" "$claude_val"
-    assert_eq "codex hook sets codex_session_id" "new-codex-id" "$codex_val"
+    assert_eq "codex restamp leaves claude id intact" "claude-id-2" "$claude_val"
+    assert_eq "codex restamp updates own id" "codex-id-2" "$codex_val"
 
     # Cleanup
     tmux set-option -pu -t "$test_pane" @claude_session_id 2>/dev/null
