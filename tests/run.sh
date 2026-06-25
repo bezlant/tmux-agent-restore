@@ -742,12 +742,17 @@ EOF
 setup_hook_fixture() {
     local tmpdir="$1"
 
-    mkdir -p "$tmpdir/home" "$tmpdir/bin" "$tmpdir/plugin/lib"
+    mkdir -p "$tmpdir/home" "$tmpdir/bin" "$tmpdir/plugin/lib" "$tmpdir/plugin/scripts"
     write_hook_tmux_stub "$tmpdir/bin/tmux"
     cat > "$tmpdir/plugin/lib/process.sh" <<'EOF'
 live_agent_pid() { printf '%s\n' 4242; }
 EOF
     ln -s "$SHARED_SESSION_HOOK" "$tmpdir/plugin/lib/session_hook.sh"
+    cat > "$tmpdir/plugin/scripts/session-save.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "save" >> "$TMUX_CLAUDE_PLUGIN_DIR/session-save.marker"
+EOF
+    chmod +x "$tmpdir/plugin/scripts/session-save.sh"
     cat > "$tmpdir/bin/ps" <<'EOF'
 #!/usr/bin/env bash
 if [ "$1" = "-axww" ] && [ "$2" = "-o" ] && [ "$3" = "pid=,ppid=,command=" ]; then
@@ -793,10 +798,29 @@ run_hook_fixture() {
         bash -c 'printf "%s\n" "$$" > "$HOOK_PID_FILE"; exec bash "$HOOK_SCRIPT"' <<<"$json"
 }
 
-tmpdir=$(mktemp -d)
-setup_hook_fixture "$tmpdir"
-mkdir -p "$tmpdir/plugin/scripts"
-cat > "$tmpdir/plugin/scripts/shared-codex-session-hook.sh" <<'EOF'
+run_hook_fixture_json() {
+    local hook_script="$1"
+    local tmpdir="$2"
+    local json="$3"
+    local pane_command="${4:-fish}"
+    local hook_pid_file="$tmpdir/hook.pid"
+
+    TMUX=1 \
+    TMUX_PANE="%1" \
+    TMUX_CLAUDE_PLUGIN_DIR="$tmpdir/plugin" \
+    TMUX_HOOK_LOG="$tmpdir/tmux.log" \
+    TMUX_STUB_PANE_COMMAND="$pane_command" \
+    HOME="$tmpdir/home" \
+    PATH="$tmpdir/bin:$PATH" \
+    HOOK_SCRIPT="$hook_script" \
+    HOOK_PID_FILE="$hook_pid_file" \
+        bash -c 'printf "%s\n" "$$" > "$HOOK_PID_FILE"; exec bash "$HOOK_SCRIPT"' <<<"$json"
+}
+
+write_shared_codex_hook_fixture() {
+    local hook_script="$1"
+
+    cat > "$hook_script" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -809,7 +833,24 @@ PLUGIN_DIR="${TMUX_CLAUDE_PLUGIN_DIR:?}"
 
 session_hook_run codex claude @codex_session_id @codex_session_pid @codex_cwd "$PLUGIN_DIR" "$0"
 EOF
-chmod +x "$tmpdir/plugin/scripts/shared-codex-session-hook.sh"
+    chmod +x "$hook_script"
+}
+
+hook_save_count() {
+    local marker="$1"
+    local i
+
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        [ -f "$marker" ] && break
+        sleep 0.1
+    done
+    [ -f "$marker" ] || { printf '%s\n' 0; return 0; }
+    grep -c '^save$' "$marker"
+}
+
+tmpdir=$(mktemp -d)
+setup_hook_fixture "$tmpdir"
+write_shared_codex_hook_fixture "$tmpdir/plugin/scripts/shared-codex-session-hook.sh"
 run_hook_fixture "$tmpdir/plugin/scripts/shared-codex-session-hook.sh" "$tmpdir" "codex-hook-session" "/tmp/project"
 hook_rc=$?
 hook_log=$(cat "$tmpdir/tmux.log" 2>/dev/null || true)
@@ -819,6 +860,52 @@ assert_contains "shared hook stamps sid option" "set-option -p -t %1 @codex_sess
 assert_contains "shared hook stamps pid option" "set-option -p -t %1 @codex_session_pid 4242" "$hook_log"
 assert_contains "shared hook stamps cwd option" "set-option -p -t %1 @codex_cwd /tmp/project" "$hook_log"
 assert_not_contains "shared hook does not clear opposite sid" "set-option -pu -t %1 @claude_session_id" "$hook_log"
+assert_eq "shared hook launches async session save once" "1" "$(hook_save_count "$tmpdir/plugin/session-save.marker")"
+
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+setup_hook_fixture "$tmpdir"
+write_shared_codex_hook_fixture "$tmpdir/plugin/scripts/shared-codex-session-hook.sh"
+run_hook_fixture "$tmpdir/plugin/scripts/shared-codex-session-hook.sh" "$tmpdir" "codex-skip-session" "/tmp/project" "claude-code"
+hook_rc=$?
+hook_log=$(cat "$tmpdir/tmux.log" 2>/dev/null || true)
+
+assert_eq "shared hook exits 0 on opposite foreground skip" "0" "$hook_rc"
+assert_not_contains "shared hook opposite foreground skips sid stamp" "set-option -p -t %1 @codex_session_id" "$hook_log"
+assert_eq "shared hook opposite foreground skip does not save" "0" "$(hook_save_count "$tmpdir/plugin/session-save.marker")"
+
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+setup_hook_fixture "$tmpdir"
+write_shared_codex_hook_fixture "$tmpdir/plugin/scripts/shared-codex-session-hook.sh"
+
+run_hook_fixture_json "$tmpdir/plugin/scripts/shared-codex-session-hook.sh" "$tmpdir" '{"cwd":"/tmp/project"}'
+assert_not_contains "shared hook missing session_id skips sid stamp" "set-option -p -t %1 @codex_session_id" "$(cat "$tmpdir/tmux.log" 2>/dev/null || true)"
+assert_eq "shared hook missing session_id does not save" "0" "$(hook_save_count "$tmpdir/plugin/session-save.marker")"
+: > "$tmpdir/tmux.log"
+
+run_hook_fixture_json "$tmpdir/plugin/scripts/shared-codex-session-hook.sh" "$tmpdir" '{"session_id":"","cwd":"/tmp/project"}'
+assert_not_contains "shared hook empty session_id skips sid stamp" "set-option -p -t %1 @codex_session_id" "$(cat "$tmpdir/tmux.log" 2>/dev/null || true)"
+assert_eq "shared hook empty session_id does not save" "0" "$(hook_save_count "$tmpdir/plugin/session-save.marker")"
+: > "$tmpdir/tmux.log"
+
+run_hook_fixture_json "$tmpdir/plugin/scripts/shared-codex-session-hook.sh" "$tmpdir" '{"session_id":null,"cwd":"/tmp/project"}'
+assert_not_contains "shared hook null session_id skips sid stamp" "set-option -p -t %1 @codex_session_id" "$(cat "$tmpdir/tmux.log" 2>/dev/null || true)"
+assert_eq "shared hook null session_id does not save" "0" "$(hook_save_count "$tmpdir/plugin/session-save.marker")"
+: > "$tmpdir/tmux.log"
+
+run_hook_fixture_json "$tmpdir/plugin/scripts/shared-codex-session-hook.sh" "$tmpdir" '{"session_id":["x"],"cwd":"/tmp/project"}'
+assert_not_contains "shared hook list session_id skips sid stamp" "set-option -p -t %1 @codex_session_id" "$(cat "$tmpdir/tmux.log" 2>/dev/null || true)"
+assert_eq "shared hook list session_id does not save" "0" "$(hook_save_count "$tmpdir/plugin/session-save.marker")"
+: > "$tmpdir/tmux.log"
+
+run_hook_fixture_json "$tmpdir/plugin/scripts/shared-codex-session-hook.sh" "$tmpdir" '{"session_id":"codex-hook-session","cwd":null}'
+hook_log=$(cat "$tmpdir/tmux.log" 2>/dev/null || true)
+assert_contains "shared hook accepts string session_id with null cwd" "set-option -p -t %1 @codex_session_id codex-hook-session" "$hook_log"
+assert_not_contains "shared hook null cwd skips cwd stamp" "set-option -p -t %1 @codex_cwd" "$hook_log"
+assert_eq "shared hook null cwd still saves once" "1" "$(hook_save_count "$tmpdir/plugin/session-save.marker")"
 
 rm -rf "$tmpdir"
 

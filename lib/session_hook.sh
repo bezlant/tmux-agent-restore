@@ -57,7 +57,7 @@ session_hook_pid_in_hook_subtree() {
 
 session_hook_json_field() {
     local field="$1"
-    python3 -c 'import sys,json; print(json.load(sys.stdin).get(sys.argv[1], ""))' "$field" 2>/dev/null || true
+    python3 -c 'import sys,json; v=json.load(sys.stdin).get(sys.argv[1], ""); print(v if isinstance(v, str) else "")' "$field" 2>/dev/null || true
 }
 
 session_hook_foreground_is_tool() {
