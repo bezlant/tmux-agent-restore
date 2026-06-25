@@ -3878,6 +3878,150 @@ unset -f write_restore_tmux_stub
 
 # ============================================================
 echo ""
+echo "=== session-restore: target window mismatch ==="
+# ============================================================
+
+write_restore_window_tmux_stub() {
+    local tmux_path="$1"
+    local restore_dir="$2"
+
+    cat > "$tmux_path" <<EOF
+#!/usr/bin/env bash
+restore_dir='$restore_dir'
+case "\$1" in
+    show-option)
+        if [ "\$4" = "@resurrect-dir" ] || [ "\$3" = "@resurrect-dir" ]; then
+            printf '%s\n' "\$restore_dir"
+            exit 0
+        fi
+        exit 1
+        ;;
+    display-message)
+        case "\$*" in
+            *"#{pane_current_command}"*) printf '%s\n' fish ;;
+            *"#{window_name}"*)
+                case "\$*" in
+                    *"0:3.1"*) printf '%s\n' ci ;;
+                    *"0:6.1"*) printf '%s\n' reminders ;;
+                    *) printf '%s\n' unknown ;;
+                esac
+                ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    list-windows)
+        if [ -f "\$restore_dir/windows" ]; then
+            cat "\$restore_dir/windows"
+        fi
+        ;;
+    list-panes)
+        case "\$*" in
+            *"0:4"*) printf '%s\n' 1 ;;
+            *"0:6"*) printf '%s\n' 1 ;;
+            *) printf '%s\n' x ;;
+        esac
+        ;;
+    send-keys)
+        printf '%s\n' "\$*" >> "\$restore_dir/send-keys.log"
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+EOF
+    chmod +x "$tmux_path"
+}
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+resurrect_dir="$tmpdir/resurrect"
+mkdir -p "$tmpbin" "$resurrect_dir"
+{
+    printf '# tmux-claude snapshot v2\n'
+    printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
+    printf '0:3.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/reminders\t\treminders\t\n'
+} > "$resurrect_dir/claude-panes.txt"
+{
+    printf '3\tci\n'
+    printf '6\treminders\n'
+} > "$resurrect_dir/windows"
+write_restore_window_tmux_stub "$tmpbin/tmux" "$resurrect_dir"
+
+ORIG_PATH="$PATH"
+PATH="$tmpbin:$PATH"
+out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+rc=$?
+PATH="$ORIG_PATH"
+
+assert_eq "restore remap exits 0" "0" "$rc"
+assert_contains "restore remaps mismatched numeric target by window name" \
+    "[dry-run] 0:6.1:" "$out"
+assert_not_contains "restore does not type into stale numeric target" \
+    "[dry-run] 0:3.1:" "$out"
+
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+resurrect_dir="$tmpdir/resurrect"
+mkdir -p "$tmpbin" "$resurrect_dir"
+{
+    printf '# tmux-claude snapshot v2\n'
+    printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
+    printf '0:3.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/reminders\t\treminders\t\n'
+} > "$resurrect_dir/claude-panes.txt"
+printf '3\tci\n' > "$resurrect_dir/windows"
+write_restore_window_tmux_stub "$tmpbin/tmux" "$resurrect_dir"
+
+ORIG_PATH="$PATH"
+PATH="$tmpbin:$PATH"
+out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+rc=$?
+PATH="$ORIG_PATH"
+restore_log_content=$(cat "$resurrect_dir/restore.log" 2>/dev/null || true)
+
+assert_eq "restore missing remap exits 0" "0" "$rc"
+assert_not_contains "restore skips mismatched target without matching window" \
+    "[dry-run]" "$out"
+assert_contains "restore logs target window mismatch" \
+    "SKIP 0:3.1 claude window_mismatch current=ci saved=reminders" "$restore_log_content"
+
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+resurrect_dir="$tmpdir/resurrect"
+mkdir -p "$tmpbin" "$resurrect_dir"
+{
+    printf '# tmux-claude snapshot v2\n'
+    printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
+    printf '0:3.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/reminders\t\treminders\t\n'
+} > "$resurrect_dir/claude-panes.txt"
+{
+    printf '3\tci\n'
+    printf '4\treminders\n'
+    printf '6\treminders\n'
+} > "$resurrect_dir/windows"
+write_restore_window_tmux_stub "$tmpbin/tmux" "$resurrect_dir"
+
+ORIG_PATH="$PATH"
+PATH="$tmpbin:$PATH"
+out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+rc=$?
+PATH="$ORIG_PATH"
+restore_log_content=$(cat "$resurrect_dir/restore.log" 2>/dev/null || true)
+
+assert_eq "restore ambiguous remap exits 0" "0" "$rc"
+assert_not_contains "restore skips ambiguous matching windows" \
+    "[dry-run]" "$out"
+assert_contains "restore logs ambiguous remap as mismatch" \
+    "SKIP 0:3.1 claude window_mismatch current=ci saved=reminders" "$restore_log_content"
+
+rm -rf "$tmpdir"
+unset -f write_restore_window_tmux_stub
+
+# ============================================================
+echo ""
 echo "=== session-restore: v2 flags and restore log ==="
 # ============================================================
 

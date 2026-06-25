@@ -28,6 +28,42 @@ restore_make_display_name() {
     printf '%s\n' "$session_name"
 }
 
+restore_resolve_target() {
+    local target="$1"
+    local wname="$2"
+    local current_wname session pane_idx win_idx win_name candidate resolved_candidate matches
+
+    [ -n "$wname" ] || { printf '%s\n' "$target"; return 0; }
+
+    current_wname=$(tmux display-message -p -t "$target" '#{window_name}' 2>/dev/null || true)
+    if [ -z "$current_wname" ] || [ "$current_wname" = "$wname" ]; then
+        printf '%s\n' "$target"
+        return 0
+    fi
+
+    session="${target%%:*}"
+    pane_idx="${target##*.}"
+    matches=0
+    resolved_candidate=
+
+    while IFS="$(printf '\t')" read -r win_idx win_name || [ -n "$win_idx$win_name" ]; do
+        [ -n "$win_idx" ] || continue
+        [ "$win_name" = "$wname" ] || continue
+        candidate="$session:$win_idx.$pane_idx"
+        if tmux list-panes -t "$session:$win_idx" -F '#{pane_index}' 2>/dev/null | grep -Fxq "$pane_idx"; then
+            matches=$((matches + 1))
+            resolved_candidate="$candidate"
+        fi
+    done < <(tmux list-windows -t "$session" -F '#{window_index}	#{window_name}' 2>/dev/null || true)
+
+    if [ "$matches" -eq 1 ]; then
+        printf '%s\n' "$resolved_candidate"
+        return 0
+    fi
+
+    return 1
+}
+
 restore_flag_has() {
     local flags="$1"
     local wanted="$2"

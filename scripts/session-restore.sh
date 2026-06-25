@@ -156,6 +156,19 @@ while IFS= read -r row || [ -n "$row" ]; do
         restore_log SKIP "$log_target $log_tool invalid_sid"
         continue
     fi
+
+    if ! resolved_target=$(restore_resolve_target "$target" "$wname"); then
+        current_wname=$(tmux display-message -p -t "$target" '#{window_name}' 2>/dev/null || true)
+        [ -n "$current_wname" ] || current_wname="-"
+        log_current_wname=$(restore_log_value "$current_wname")
+        skip=$((skip + 1))
+        restore_log SKIP "$log_target $log_tool window_mismatch current=$log_current_wname saved=$log_wname"
+        continue
+    fi
+
+    target="$resolved_target"
+    log_target=$(restore_log_value "$target")
+
     printf "%-12s %-8s %-8s %s\n" "$log_target" "($log_wname)" "$log_tool" "$log_sid"
 
     restore_fn="${tool}_restore_argv"
