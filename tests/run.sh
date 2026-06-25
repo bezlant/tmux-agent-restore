@@ -4301,6 +4301,7 @@ case "\$1" in
             *"#{window_name}"*)
                 case "\$*" in
                     *"0:3.1"*) exit 1 ;;
+                    *"0:99.1"*) exit 1 ;;
                     *"0:6.1"*) printf '%s\n' reminders ;;
                     *) printf '%s\n' unknown ;;
                 esac
@@ -4386,6 +4387,59 @@ assert_contains "restore remaps uninspectable target by unique window name" \
     "[dry-run] 0:6.1:" "$out"
 assert_not_contains "restore uninspectable target does not dry-run stale target" \
     "[dry-run] 0:3.1:" "$out"
+
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+resurrect_dir="$tmpdir/resurrect"
+mkdir -p "$tmpbin" "$resurrect_dir"
+{
+    printf '# tmux-claude snapshot v2\n'
+    printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
+    printf '0:3.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/empty-name\t\t\t\n'
+} > "$resurrect_dir/claude-panes.txt"
+printf '3\tci\n' > "$resurrect_dir/windows"
+write_restore_window_tmux_stub "$tmpbin/tmux" "$resurrect_dir"
+
+ORIG_PATH="$PATH"
+PATH="$tmpbin:$PATH"
+out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+rc=$?
+PATH="$ORIG_PATH"
+
+assert_eq "restore empty saved window name inspectable exits 0" "0" "$rc"
+assert_contains "restore empty saved window name inspectable dry-runs original target" \
+    "[dry-run] 0:3.1:" "$out"
+
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+resurrect_dir="$tmpdir/resurrect"
+mkdir -p "$tmpbin" "$resurrect_dir"
+{
+    printf '# tmux-claude snapshot v2\n'
+    printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
+    printf '0:99.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/missing-empty-name\t\t\t\n'
+} > "$resurrect_dir/claude-panes.txt"
+printf '3\tci\n' > "$resurrect_dir/windows"
+write_restore_uninspectable_target_tmux_stub "$tmpbin/tmux" "$resurrect_dir"
+
+ORIG_PATH="$PATH"
+PATH="$tmpbin:$PATH"
+out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+rc=$?
+PATH="$ORIG_PATH"
+restore_log_content=$(cat "$resurrect_dir/restore.log" 2>/dev/null || true)
+
+assert_eq "restore empty saved window name uninspectable exits 0" "0" "$rc"
+assert_not_contains "restore empty saved window name uninspectable emits no dry-run" \
+    "[dry-run]" "$out"
+assert_contains "restore empty saved window name uninspectable logs mismatch" \
+    "window_mismatch current=-" "$restore_log_content"
+assert_contains "restore empty saved window name uninspectable counts skip" \
+    "END ok=0 warn=0 skip=1 total=1" "$restore_log_content"
 
 rm -rf "$tmpdir"
 

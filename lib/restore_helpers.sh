@@ -33,13 +33,13 @@ restore_resolve_target() {
     local wname="$2"
     local current_wname session pane_idx win_idx win_name candidate resolved_candidate matches
 
-    [ -n "$wname" ] || { printf '%s\n' "$target"; return 0; }
-
     current_wname=$(tmux display-message -p -t "$target" '#{window_name}' 2>/dev/null || true)
-    if [ "$current_wname" = "$wname" ]; then
+    if [ -n "$current_wname" ] && { [ -z "$wname" ] || [ "$current_wname" = "$wname" ]; }; then
         printf '%s\n' "$target"
         return 0
     fi
+
+    [ -n "$wname" ] || return 1
 
     session="${target%%:*}"
     pane_idx="${target##*.}"
