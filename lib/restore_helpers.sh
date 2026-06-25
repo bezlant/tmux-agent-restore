@@ -36,7 +36,7 @@ restore_resolve_target() {
     [ -n "$wname" ] || { printf '%s\n' "$target"; return 0; }
 
     current_wname=$(tmux display-message -p -t "$target" '#{window_name}' 2>/dev/null || true)
-    if [ -z "$current_wname" ] || [ "$current_wname" = "$wname" ]; then
+    if [ "$current_wname" = "$wname" ]; then
         printf '%s\n' "$target"
         return 0
     fi

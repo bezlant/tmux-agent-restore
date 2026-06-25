@@ -3849,6 +3849,38 @@ printf "0:6.1|claude|0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf|/repo/evil'; touch '%s
 
 cat > "$tmpbin/tmux" <<EOF
 #!/usr/bin/env bash
+target_arg() {
+    while [ "\$#" -gt 0 ]; do
+        if [ "\$1" = "-t" ]; then
+            shift
+            printf '%s\n' "\${1:-}"
+            return 0
+        fi
+        shift
+    done
+}
+snapshot_window_name() {
+    awk -v target="\$1" '
+        /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+        {
+            if (index(\$0, "|")) {
+                split(\$0, field, "|")
+                wname = field[5]
+            } else {
+                split(\$0, field, "\t")
+                wname = field[7]
+            }
+            if (field[1] == target) {
+                gsub(/%09/, "\t", wname)
+                gsub(/%0A/, "\n", wname)
+                gsub(/%0D/, "\r", wname)
+                gsub(/%25/, "%", wname)
+                print wname
+                exit
+            }
+        }
+    ' "$resurrect_dir/claude-panes.txt"
+}
 case "\$1" in
     show-option)
         if [ "\$4" = "@resurrect-dir" ] || [ "\$3" = "@resurrect-dir" ]; then
@@ -3859,6 +3891,7 @@ case "\$1" in
         ;;
     display-message)
         case "\$*" in
+            *"#{window_name}"*) snapshot_window_name "\$(target_arg "\$@")" ;;
             *"#{pane_current_command}"*) printf '%s\n' fish ;;
             *) exit 1 ;;
         esac
@@ -3919,6 +3952,38 @@ write_restore_tmux_stub() {
 
     cat > "$tmux_path" <<EOF
 #!/usr/bin/env bash
+target_arg() {
+    while [ "\$#" -gt 0 ]; do
+        if [ "\$1" = "-t" ]; then
+            shift
+            printf '%s\n' "\${1:-}"
+            return 0
+        fi
+        shift
+    done
+}
+snapshot_window_name() {
+    awk -v target="\$1" '
+        /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+        {
+            if (index(\$0, "|")) {
+                split(\$0, field, "|")
+                wname = field[5]
+            } else {
+                split(\$0, field, "\t")
+                wname = field[7]
+            }
+            if (field[1] == target) {
+                gsub(/%09/, "\t", wname)
+                gsub(/%0A/, "\n", wname)
+                gsub(/%0D/, "\r", wname)
+                gsub(/%25/, "%", wname)
+                print wname
+                exit
+            }
+        }
+    ' "$restore_dir/claude-panes.txt"
+}
 case "\$1" in
     show-option)
         if [ "\$4" = "@resurrect-dir" ] || [ "\$3" = "@resurrect-dir" ]; then
@@ -3929,6 +3994,7 @@ case "\$1" in
         ;;
     display-message)
         case "\$*" in
+            *"#{window_name}"*) snapshot_window_name "\$(target_arg "\$@")" ;;
             *"#{pane_current_command}"*) printf '%s\n' fish ;;
             *) exit 1 ;;
         esac
@@ -4214,6 +4280,57 @@ EOF
     chmod +x "$tmux_path"
 }
 
+write_restore_uninspectable_target_tmux_stub() {
+    local tmux_path="$1"
+    local restore_dir="$2"
+
+    cat > "$tmux_path" <<EOF
+#!/usr/bin/env bash
+restore_dir='$restore_dir'
+case "\$1" in
+    show-option)
+        if [ "\$4" = "@resurrect-dir" ] || [ "\$3" = "@resurrect-dir" ]; then
+            printf '%s\n' "\$restore_dir"
+            exit 0
+        fi
+        exit 1
+        ;;
+    display-message)
+        case "\$*" in
+            *"#{pane_current_command}"*) printf '%s\n' fish ;;
+            *"#{window_name}"*)
+                case "\$*" in
+                    *"0:3.1"*) exit 1 ;;
+                    *"0:6.1"*) printf '%s\n' reminders ;;
+                    *) printf '%s\n' unknown ;;
+                esac
+                ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    list-windows)
+        if [ -f "\$restore_dir/windows" ]; then
+            cat "\$restore_dir/windows"
+        fi
+        ;;
+    list-panes)
+        case "\$*" in
+            *"0:4"*) printf '%s\n' 1 ;;
+            *"0:6"*) printf '%s\n' 1 ;;
+            *) printf '%s\n' x ;;
+        esac
+        ;;
+    send-keys)
+        printf '%s\n' "\$*" >> "\$restore_dir/send-keys.log"
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+EOF
+    chmod +x "$tmux_path"
+}
+
 tmpdir=$(mktemp -d)
 tmpbin="$tmpdir/bin"
 resurrect_dir="$tmpdir/resurrect"
@@ -4240,6 +4357,62 @@ assert_contains "restore remaps mismatched numeric target by window name" \
     "[dry-run] 0:6.1:" "$out"
 assert_not_contains "restore does not type into stale numeric target" \
     "[dry-run] 0:3.1:" "$out"
+
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+resurrect_dir="$tmpdir/resurrect"
+mkdir -p "$tmpbin" "$resurrect_dir"
+{
+    printf '# tmux-claude snapshot v2\n'
+    printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
+    printf '0:3.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/reminders\t\treminders\t\n'
+} > "$resurrect_dir/claude-panes.txt"
+{
+    printf '3\tci\n'
+    printf '6\treminders\n'
+} > "$resurrect_dir/windows"
+write_restore_uninspectable_target_tmux_stub "$tmpbin/tmux" "$resurrect_dir"
+
+ORIG_PATH="$PATH"
+PATH="$tmpbin:$PATH"
+out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+rc=$?
+PATH="$ORIG_PATH"
+
+assert_eq "restore remaps uninspectable target exits 0" "0" "$rc"
+assert_contains "restore remaps uninspectable target by unique window name" \
+    "[dry-run] 0:6.1:" "$out"
+assert_not_contains "restore uninspectable target does not dry-run stale target" \
+    "[dry-run] 0:3.1:" "$out"
+
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+resurrect_dir="$tmpdir/resurrect"
+mkdir -p "$tmpbin" "$resurrect_dir"
+{
+    printf '# tmux-claude snapshot v2\n'
+    printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
+    printf '0:3.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/reminders\t\treminders\t\n'
+} > "$resurrect_dir/claude-panes.txt"
+printf '3\tci\n' > "$resurrect_dir/windows"
+write_restore_uninspectable_target_tmux_stub "$tmpbin/tmux" "$resurrect_dir"
+
+ORIG_PATH="$PATH"
+PATH="$tmpbin:$PATH"
+out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+rc=$?
+PATH="$ORIG_PATH"
+restore_log_content=$(cat "$resurrect_dir/restore.log" 2>/dev/null || true)
+
+assert_eq "restore uninspectable missing remap exits 0" "0" "$rc"
+assert_not_contains "restore uninspectable missing remap emits no dry-run" \
+    "[dry-run]" "$out"
+assert_contains "restore uninspectable missing remap logs mismatch" \
+    "SKIP 0:3.1 claude window_mismatch current=- saved=reminders" "$restore_log_content"
 
 rm -rf "$tmpdir"
 
@@ -4300,7 +4473,7 @@ assert_contains "restore logs ambiguous remap as mismatch" \
     "SKIP 0:3.1 claude window_mismatch current=ci saved=reminders" "$restore_log_content"
 
 rm -rf "$tmpdir"
-unset -f write_restore_window_tmux_stub
+unset -f write_restore_window_tmux_stub write_restore_uninspectable_target_tmux_stub
 
 # ============================================================
 echo ""
@@ -4321,6 +4494,38 @@ EOF
 
 cat > "$tmpbin/tmux" <<EOF
 #!/usr/bin/env bash
+target_arg() {
+    while [ "\$#" -gt 0 ]; do
+        if [ "\$1" = "-t" ]; then
+            shift
+            printf '%s\n' "\${1:-}"
+            return 0
+        fi
+        shift
+    done
+}
+snapshot_window_name() {
+    awk -v target="\$1" '
+        /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+        {
+            if (index(\$0, "|")) {
+                split(\$0, field, "|")
+                wname = field[5]
+            } else {
+                split(\$0, field, "\t")
+                wname = field[7]
+            }
+            if (field[1] == target) {
+                gsub(/%09/, "\t", wname)
+                gsub(/%0A/, "\n", wname)
+                gsub(/%0D/, "\r", wname)
+                gsub(/%25/, "%", wname)
+                print wname
+                exit
+            }
+        }
+    ' "$resurrect_dir/claude-panes.txt"
+}
 case "\$1" in
     show-option)
         if [ "\$4" = "@resurrect-dir" ] || [ "\$3" = "@resurrect-dir" ]; then
@@ -4331,6 +4536,7 @@ case "\$1" in
         ;;
     display-message)
         case "\$*" in
+            *"#{window_name}"*) snapshot_window_name "\$(target_arg "\$@")" ;;
             *"#{pane_current_command}"*) printf '%s\n' fish ;;
             *) exit 1 ;;
         esac
@@ -4381,6 +4587,38 @@ EOF
 
 cat > "$tmpbin/tmux" <<EOF
 #!/usr/bin/env bash
+target_arg() {
+    while [ "\$#" -gt 0 ]; do
+        if [ "\$1" = "-t" ]; then
+            shift
+            printf '%s\n' "\${1:-}"
+            return 0
+        fi
+        shift
+    done
+}
+snapshot_window_name() {
+    awk -v target="\$1" '
+        /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+        {
+            if (index(\$0, "|")) {
+                split(\$0, field, "|")
+                wname = field[5]
+            } else {
+                split(\$0, field, "\t")
+                wname = field[7]
+            }
+            if (field[1] == target) {
+                gsub(/%09/, "\t", wname)
+                gsub(/%0A/, "\n", wname)
+                gsub(/%0D/, "\r", wname)
+                gsub(/%25/, "%", wname)
+                print wname
+                exit
+            }
+        }
+    ' "$resurrect_dir/claude-panes.txt"
+}
 case "\$1" in
     show-option)
         if [ "\$4" = "@resurrect-dir" ] || [ "\$3" = "@resurrect-dir" ]; then
@@ -4391,6 +4629,7 @@ case "\$1" in
         ;;
     display-message)
         case "\$*" in
+            *"#{window_name}"*) snapshot_window_name "\$(target_arg "\$@")" ;;
             *"#{pane_current_command}"*) printf '%s\n' fish ;;
             *) exit 1 ;;
         esac
@@ -4450,6 +4689,38 @@ EOF
 
 cat > "$tmpbin/tmux" <<EOF
 #!/usr/bin/env bash
+target_arg() {
+    while [ "\$#" -gt 0 ]; do
+        if [ "\$1" = "-t" ]; then
+            shift
+            printf '%s\n' "\${1:-}"
+            return 0
+        fi
+        shift
+    done
+}
+snapshot_window_name() {
+    awk -v target="\$1" '
+        /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+        {
+            if (index(\$0, "|")) {
+                split(\$0, field, "|")
+                wname = field[5]
+            } else {
+                split(\$0, field, "\t")
+                wname = field[7]
+            }
+            if (field[1] == target) {
+                gsub(/%09/, "\t", wname)
+                gsub(/%0A/, "\n", wname)
+                gsub(/%0D/, "\r", wname)
+                gsub(/%25/, "%", wname)
+                print wname
+                exit
+            }
+        }
+    ' "$resurrect_dir/claude-panes.txt"
+}
 case "\$1" in
     show-option)
         if [ "\$4" = "@resurrect-dir" ] || [ "\$3" = "@resurrect-dir" ]; then
@@ -4460,6 +4731,7 @@ case "\$1" in
         ;;
     display-message)
         case "\$*" in
+            *"#{window_name}"*) snapshot_window_name "\$(target_arg "\$@")" ;;
             *"#{pane_current_command}"*)
                 case "\$*" in
                     *"0:1.1"*) printf '%s\n' claude ;;
