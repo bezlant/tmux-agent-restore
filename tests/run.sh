@@ -711,6 +711,7 @@ echo "=== SessionStart hooks: pid stamping ==="
 
 CLAUDE_HOOK="$PLUGIN_DIR/scripts/claude-session-hook.sh"
 CODEX_HOOK="$PLUGIN_DIR/scripts/codex-session-hook.sh"
+SHARED_SESSION_HOOK="$PLUGIN_DIR/lib/session_hook.sh"
 
 write_hook_tmux_stub() {
     local tmux_path="$1"
@@ -746,6 +747,7 @@ setup_hook_fixture() {
     cat > "$tmpdir/plugin/lib/process.sh" <<'EOF'
 live_agent_pid() { printf '%s\n' 4242; }
 EOF
+    ln -s "$SHARED_SESSION_HOOK" "$tmpdir/plugin/lib/session_hook.sh"
     cat > "$tmpdir/bin/ps" <<'EOF'
 #!/usr/bin/env bash
 if [ "$1" = "-axww" ] && [ "$2" = "-o" ] && [ "$3" = "pid=,ppid=,command=" ]; then
@@ -790,6 +792,35 @@ run_hook_fixture() {
     HOOK_PID_FILE="$hook_pid_file" \
         bash -c 'printf "%s\n" "$$" > "$HOOK_PID_FILE"; exec bash "$HOOK_SCRIPT"' <<<"$json"
 }
+
+tmpdir=$(mktemp -d)
+setup_hook_fixture "$tmpdir"
+mkdir -p "$tmpdir/plugin/scripts"
+cat > "$tmpdir/plugin/scripts/shared-codex-session-hook.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+PLUGIN_DIR="${TMUX_CLAUDE_PLUGIN_DIR:?}"
+
+# shellcheck source=../lib/process.sh
+. "$PLUGIN_DIR/lib/process.sh"
+# shellcheck source=../lib/session_hook.sh
+. "$PLUGIN_DIR/lib/session_hook.sh"
+
+session_hook_run codex claude @codex_session_id @codex_session_pid @codex_cwd "$PLUGIN_DIR" "$0"
+EOF
+chmod +x "$tmpdir/plugin/scripts/shared-codex-session-hook.sh"
+run_hook_fixture "$tmpdir/plugin/scripts/shared-codex-session-hook.sh" "$tmpdir" "codex-hook-session" "/tmp/project"
+hook_rc=$?
+hook_log=$(cat "$tmpdir/tmux.log" 2>/dev/null || true)
+
+assert_eq "shared hook exits 0" "0" "$hook_rc"
+assert_contains "shared hook stamps sid option" "set-option -p -t %1 @codex_session_id codex-hook-session" "$hook_log"
+assert_contains "shared hook stamps pid option" "set-option -p -t %1 @codex_session_pid 4242" "$hook_log"
+assert_contains "shared hook stamps cwd option" "set-option -p -t %1 @codex_cwd /tmp/project" "$hook_log"
+assert_not_contains "shared hook does not clear opposite sid" "set-option -pu -t %1 @claude_session_id" "$hook_log"
+
+rm -rf "$tmpdir"
 
 if [ ! -f "$CLAUDE_HOOK" ]; then
     echo "  WARN: Claude SessionStart hook missing at $CLAUDE_HOOK; skipping hook integration test"
@@ -927,6 +958,7 @@ setup_real_hook_fixture() {
     mkdir -p "$tmpdir/home" "$tmpdir/bin" "$tmpdir/plugin/lib"
     write_hook_tmux_stub "$tmpdir/bin/tmux"
     cp "$PLUGIN_DIR/lib/process.sh" "$tmpdir/plugin/lib/process.sh"
+    ln -s "$SHARED_SESSION_HOOK" "$tmpdir/plugin/lib/session_hook.sh"
     printf '%s\n' " 100     1 fish" > "$tmpdir/ps_tree"
     printf ' 200   100 %s --resume real-session\n' "$tool" >> "$tmpdir/ps_tree"
     printf ' 300   200 bash %s\n' "$hook_script" >> "$tmpdir/ps_tree"
