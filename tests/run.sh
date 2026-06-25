@@ -386,6 +386,96 @@ rm -rf "$tmpdir"
 
 tmpdir=$(mktemp -d)
 setup_save_fixture "$tmpdir" claude "$CLAUDE_UUID_SAVE" "$tmpdir/project"
+mkdir -p "$tmpdir/project" "$tmpdir/home/.claude/projects/work" "$tmpdir/resurrect/.claude-save.lock"
+: > "$tmpdir/home/.claude/projects/work/$CLAUDE_UUID_SAVE.jsonl"
+TMUX_CLAUDE_SAVE_LOCK_STALE_SECONDS=0 run_save_fixture "$tmpdir"
+save_rc=$?
+assert_eq "save recovers stale empty lock exits 0" "0" "$save_rc"
+assert_eq "save recovers stale empty lock writes snapshot" \
+    "# tmux-claude snapshot v2" \
+    "$(sed -n '1p' "$tmpdir/resurrect/claude-panes.txt" 2>/dev/null)"
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+setup_save_fixture "$tmpdir" claude "$CLAUDE_UUID_SAVE" "$tmpdir/project"
+mkdir -p "$tmpdir/project" "$tmpdir/home/.claude/projects/work" "$tmpdir/resurrect/.claude-save.lock"
+: > "$tmpdir/home/.claude/projects/work/$CLAUDE_UUID_SAVE.jsonl"
+cat > "$tmpdir/bin/stat" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = "-f" ] && [ "$2" = "%m" ]; then
+    printf '%s\n' "not-a-bsd-mtime"
+    exit 0
+fi
+if [ "$1" = "-c" ] && [ "$2" = "%Y" ]; then
+    printf '%s\n' 0
+    exit 0
+fi
+exit 1
+EOF
+chmod +x "$tmpdir/bin/stat"
+run_save_fixture "$tmpdir"
+assert_eq "save recovers stale lock with GNU stat fallback" \
+    "# tmux-claude snapshot v2" \
+    "$(sed -n '1p' "$tmpdir/resurrect/claude-panes.txt" 2>/dev/null)"
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+setup_save_fixture "$tmpdir" claude "$CLAUDE_UUID_SAVE" "$tmpdir/project"
+mkdir -p "$tmpdir/project" "$tmpdir/home/.claude/projects/work" "$tmpdir/resurrect/.claude-save.lock"
+: > "$tmpdir/home/.claude/projects/work/$CLAUDE_UUID_SAVE.jsonl"
+printf '%s\n' 999999 > "$tmpdir/resurrect/.claude-save.lock/pid"
+run_save_fixture "$tmpdir"
+assert_eq "save recovers stale dead-pid lock" \
+    "# tmux-claude snapshot v2" \
+    "$(sed -n '1p' "$tmpdir/resurrect/claude-panes.txt" 2>/dev/null)"
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+setup_save_fixture "$tmpdir" claude "$CLAUDE_UUID_SAVE" "$tmpdir/project"
+mkdir -p "$tmpdir/project" "$tmpdir/home/.claude/projects/work" "$tmpdir/resurrect/.claude-save.lock"
+: > "$tmpdir/home/.claude/projects/work/$CLAUDE_UUID_SAVE.jsonl"
+sleep 10 &
+sleep_pid=$!
+printf '%s\n' "$sleep_pid" > "$tmpdir/resurrect/.claude-save.lock/pid"
+TMUX_CLAUDE_SAVE_LOCK_STALE_SECONDS=0 run_save_fixture "$tmpdir"
+kill "$sleep_pid" 2>/dev/null || true
+wait "$sleep_pid" 2>/dev/null || true
+assert_eq "save recovers stale unrelated-live-pid lock" \
+    "# tmux-claude snapshot v2" \
+    "$(sed -n '1p' "$tmpdir/resurrect/claude-panes.txt" 2>/dev/null)"
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+mkdir -p "$tmpdir/bin" "$tmpdir/resurrect" "$tmpdir/home" "$tmpdir/resurrect/.claude-save.lock"
+printf '%s\n' "$tmpdir/resurrect" > "$tmpdir/resurrect_dir"
+printf '%s\n' "precious snapshot" > "$tmpdir/resurrect/claude-panes.txt"
+write_save_tmux_stub "$tmpdir/bin/tmux" "$tmpdir"
+bash -c 'sleep 10' session-save.sh &
+save_like_pid=$!
+cat > "$tmpdir/bin/ps" <<EOF
+#!/usr/bin/env bash
+if [ "\$1" = "-p" ] && [ "\$2" = "$save_like_pid" ] && [ "\$3" = "-o" ] && [ "\$4" = "command=" ]; then
+    printf '%s\n' "bash /tmp/session-save.sh"
+    exit 0
+fi
+exit 1
+EOF
+chmod +x "$tmpdir/bin/ps"
+printf '%s\n' "$save_like_pid" > "$tmpdir/resurrect/.claude-save.lock/pid"
+printf '%s\n' "other-token" > "$tmpdir/resurrect/.claude-save.lock/token"
+TMUX_CLAUDE_SAVE_LOCK_STALE_SECONDS=0 TMUX_CLAUDE_SAVE_LOCK_ATTEMPTS=1 run_save_fixture "$tmpdir"
+kill "$save_like_pid" 2>/dev/null || true
+wait "$save_like_pid" 2>/dev/null || true
+assert_eq "save preserves active session-save lock snapshot" \
+    "precious snapshot" \
+    "$(cat "$tmpdir/resurrect/claude-panes.txt")"
+assert_eq "save preserves active session-save lock directory" \
+    "present" \
+    "$([ -d "$tmpdir/resurrect/.claude-save.lock" ] && echo present || echo absent)"
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+setup_save_fixture "$tmpdir" claude "$CLAUDE_UUID_SAVE" "$tmpdir/project"
 mkdir -p "$tmpdir/project"
 run_save_fixture "$tmpdir"
 row=$(snapshot_read "$tmpdir/resurrect/claude-panes.txt" 2>/dev/null)
