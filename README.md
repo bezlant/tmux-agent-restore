@@ -185,6 +185,10 @@ This avoids:
 - `--continue` (resumes most recent session in the directory regardless of name — causes cross-pane hijacking)
 - Matching on `agentName` (can be overwritten by previous `--name` flags, leaving contaminated metadata)
 
+## Architecture Notes
+
+The main domain terms and invariants live in `CONTEXT.md`. Load-bearing decisions are recorded in `docs/adr/` so future restore changes do not re-litigate coexisting tool stamps, pane map ownership, or fail-closed target remapping.
+
 ## License
 
 MIT
