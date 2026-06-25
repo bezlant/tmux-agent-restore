@@ -50,7 +50,7 @@ restore_resolve_target() {
         [ -n "$win_idx" ] || continue
         [ "$win_name" = "$wname" ] || continue
         candidate="$session:$win_idx.$pane_idx"
-        if tmux list-panes -t "$session:$win_idx" -F '#{pane_index}' 2>/dev/null | grep -Fxq "$pane_idx"; then
+        if tmux list-panes -t "$session:$win_idx" -F '#{pane_index}' 2>/dev/null | grep -Fxq -- "$pane_idx"; then
             matches=$((matches + 1))
             resolved_candidate="$candidate"
         fi

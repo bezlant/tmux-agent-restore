@@ -4582,6 +4582,36 @@ mkdir -p "$tmpbin" "$resurrect_dir"
 {
     printf '# tmux-claude snapshot v2\n'
     printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
+    printf '0:3.--help\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/reminders\t\treminders\t\n'
+} > "$resurrect_dir/claude-panes.txt"
+printf '3\tci\n6\treminders\n' > "$resurrect_dir/windows"
+write_restore_uninspectable_target_tmux_stub "$tmpbin/tmux" "$resurrect_dir"
+
+ORIG_PATH="$PATH"
+PATH="$tmpbin:$PATH"
+out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run 2>"$tmpdir/restore.err")
+rc=$?
+PATH="$ORIG_PATH"
+err=$(cat "$tmpdir/restore.err")
+restore_log_content=$(cat "$resurrect_dir/restore.log" 2>/dev/null || true)
+
+assert_eq "restore option-shaped pane index exits 0" "0" "$rc"
+assert_not_contains "restore option-shaped pane index emits no grep usage" \
+    "Usage:" "$err"
+assert_not_contains "restore option-shaped pane index emits no dry-run" \
+    "[dry-run]" "$out"
+assert_contains "restore option-shaped pane index logs mismatch" \
+    "SKIP 0:3.--help claude window_mismatch" "$restore_log_content"
+
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+resurrect_dir="$tmpdir/resurrect"
+mkdir -p "$tmpbin" "$resurrect_dir"
+{
+    printf '# tmux-claude snapshot v2\n'
+    printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
     printf '0:3.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/empty-name\t\t\t\n'
 } > "$resurrect_dir/claude-panes.txt"
 printf '3\tci\n' > "$resurrect_dir/windows"
