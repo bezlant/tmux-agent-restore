@@ -1,69 +1,35 @@
 # tmux-claude:session-name
-# Claude Code wrapper with pane-aware session resume.
+# Claude Code wrapper with pane-aware stable naming.
 # Install: source this file from ~/.bashrc
 
-__tmux_claude_find_session() {
-    local target="$1"
-    local project_dir="$HOME/.claude/projects/$(pwd | tr '/.' '-')"
-    [ -d "$project_dir" ] || return
-
-    python3 -c "
-import os, sys, json
-
-d, target = sys.argv[1], sys.argv[2]
-files = []
-for f in os.listdir(d):
-    if f.endswith('.jsonl'):
-        fp = os.path.join(d, f)
-        files.append((os.path.getmtime(fp), fp, f))
-files.sort(reverse=True)
-
-for _, fp, fname in files:
-    with open(fp) as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-            except (json.JSONDecodeError, ValueError):
-                continue
-            if obj.get('type') == 'custom-title':
-                if obj.get('customTitle') == target:
-                    print(fname[:-6])
-                    sys.exit(0)
-                break
-" "$project_dir" "$target" 2>/dev/null
-}
+__tmux_claude_wrapper_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
+__tmux_claude_sourced_plugin_dir="$(dirname -- "$__tmux_claude_wrapper_dir")"
+unset __tmux_claude_wrapper_dir
 
 claude() {
     local extra_args=()
-    if [ -n "$TMUX" ]; then
-        local skip=0
-        for arg in "$@"; do
-            case "$arg" in
-                --name|--name=*|--resume|-r|--resume=*|--continue|-c|--continue=*|--print|-p)
-                    skip=1; break ;;
-            esac
-        done
-        if [ "$skip" -eq 0 ]; then
-            local wname pane_count pane name sid
-            wname=$(tmux display-message -p -t "$TMUX_PANE" '#{window_name}' 2>/dev/null)
-            pane_count=$(tmux display-message -p -t "$TMUX_PANE" '#{window_panes}' 2>/dev/null)
-            pane=$(tmux display-message -p -t "$TMUX_PANE" '#{pane_index}' 2>/dev/null)
-            if [ -n "$wname" ]; then
-                name="$wname"
-                if [ -n "$pane_count" ] && [ "$pane_count" -gt 1 ] 2>/dev/null && [ -n "$pane" ]; then
-                    name="$wname.$pane"
-                fi
-                sid=$(__tmux_claude_find_session "$name")
-                if [ -n "$sid" ]; then
-                    extra_args=(--resume "$sid" --name "$name")
-                else
-                    extra_args=(--name "$name")
-                fi
-            fi
+    local pass_args=()
+    local arg
+    for arg in "$@"; do
+        [ "$arg" = "--tmux-resume" ] && continue
+        pass_args+=("$arg")
+    done
+
+    local plugin_dir="${TMUX_CLAUDE_PLUGIN_DIR:-}"
+    if [ -z "$plugin_dir" ]; then
+        if [ -n "${__tmux_claude_sourced_plugin_dir:-}" ] && [ -x "$__tmux_claude_sourced_plugin_dir/scripts/claude-session-args.sh" ]; then
+            plugin_dir="$__tmux_claude_sourced_plugin_dir"
+        else
+            plugin_dir="${HOME:-}/.config/tmux/plugins/tmux-claude"
         fi
     fi
-    command claude "${extra_args[@]}" "$@"
+    local helper="$plugin_dir/scripts/claude-session-args.sh"
+    if [ -x "$helper" ]; then
+        local line
+        while IFS= read -r line; do
+            extra_args+=("$line")
+        done < <("$helper" "$@")
+    fi
+
+    command claude "${extra_args[@]}" "${pass_args[@]}"
 }

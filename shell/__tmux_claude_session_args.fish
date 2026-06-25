@@ -1,5 +1,5 @@
 # tmux-claude:session-name
-# Returns --resume/--name args for pane-aware session resume.
+# Returns --name by default, or --resume/--name for opt-in pane-aware resume.
 
 function __tmux_claude_session_args
     test -z "$TMUX"; and return
@@ -9,20 +9,20 @@ function __tmux_claude_session_args
             case --tmux-resume
                 set tmux_resume 1
                 continue
-            case --name '--name=*' --resume '-r' '--resume=*' --continue '-c' '--continue=*' --print '-p'
+            case --name '--name=*' --resume '-r' '--resume=*' --continue '-c' '--continue=*' --print '--print=*' '-p'
                 return
         end
     end
     if test "$TMUX_CLAUDE_AUTO_RESUME" = "1"
         set tmux_resume 1
     end
-    set -l wname (tmux display-message -p -t "$TMUX_PANE" '#{window_name}' 2>/dev/null)
-    set -l pane_count (tmux display-message -p -t "$TMUX_PANE" '#{window_panes}' 2>/dev/null)
-    set -l pane (tmux display-message -p -t "$TMUX_PANE" '#{pane_index}' 2>/dev/null)
+    set -l wname (tmux display-message -p -t "$TMUX_PANE" '#{window_name}' 2>/dev/null | string collect)
+    set -l pane_count (tmux display-message -p -t "$TMUX_PANE" '#{window_panes}' 2>/dev/null | string collect)
+    set -l pane (tmux display-message -p -t "$TMUX_PANE" '#{pane_index}' 2>/dev/null | string collect)
 
     if test -z "$wname"; or string match -qr '^(fish|bash|zsh|sh|dash|tcsh|csh|ksh|nu|nushell|pwsh)$' -- "$wname"
-        set -l sess (tmux display-message -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null)
-        set -l win (tmux display-message -p -t "$TMUX_PANE" '#{window_index}' 2>/dev/null)
+        set -l sess (tmux display-message -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null | string collect)
+        set -l win (tmux display-message -p -t "$TMUX_PANE" '#{window_index}' 2>/dev/null | string collect)
         test -z "$sess" -o -z "$win"; and return
         set wname "$sess:$win"
     end

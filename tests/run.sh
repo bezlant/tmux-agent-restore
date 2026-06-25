@@ -51,6 +51,10 @@ assert_not_contains() {
     fi
 }
 
+bracket_argv_lines() {
+    sed 's/^/[/' | sed 's/$/]/' | tr '\n' '|' | sed 's/|$//'
+}
+
 # ============================================================
 echo "=== session-restore: 5-field format parsing ==="
 # ============================================================
@@ -1184,6 +1188,7 @@ if command -v fish &>/dev/null; then
     test_skip "--continue" "skipped"
     test_skip "-c" "skipped"
     test_skip "--print" "skipped"
+    test_skip "--print=json" "skipped"
     test_skip "-p" "skipped"
     test_skip "--name custom" "skipped"
 else
@@ -1322,6 +1327,103 @@ for _, fp, fname in files:
 else
     echo "  SKIP: fish or python3 not installed"
 fi
+
+# ============================================================
+echo ""
+echo "=== shared Claude session args helper ==="
+# ============================================================
+
+if command -v python3 &>/dev/null; then
+    tmpdir=$(mktemp -d)
+    fixture_dir="$tmpdir/projects"
+    mkdir -p "$fixture_dir"
+    unsafe_sid=$(printf 'session-redbot\n--resume\nevil')
+    printf '%s\n' '{"type":"custom-title","customTitle":"redbot"}' > "$fixture_dir/$unsafe_sid.jsonl"
+
+    result=$(python3 "$PLUGIN_DIR/scripts/claude-find-session.py" "$fixture_dir" redbot 2>/dev/null || true)
+    assert_eq "finder rejects session ids with embedded newlines" "" "$result"
+
+    rm -f "$fixture_dir/$unsafe_sid.jsonl"
+    printf '%s\n' '{"type":"custom-title","customTitle":"redbot"}' > "$fixture_dir/--continue.jsonl"
+
+    result=$(python3 "$PLUGIN_DIR/scripts/claude-find-session.py" "$fixture_dir" redbot 2>/dev/null || true)
+    assert_eq "finder rejects option-shaped session ids" "" "$result"
+
+    rm -rf "$tmpdir"
+else
+    echo "  SKIP: python3 not installed"
+fi
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+tmux_home="$tmpdir/home"
+repo_dir="$tmpdir/repo"
+mkdir -p "$tmpbin" "$tmux_home" "$repo_dir"
+project_dir="$tmux_home/.claude/projects/$(printf '%s' "$repo_dir" | tr '/.' '--')"
+mkdir -p "$project_dir"
+printf '%s\n' '{"type":"custom-title","customTitle":"redbot"}' > "$project_dir/session-redbot.jsonl"
+
+cat > "$tmpbin/tmux" <<'EOF'
+#!/usr/bin/env bash
+case "$5" in
+    '#{window_name}') printf '%s\n' redbot ;;
+    '#{window_panes}') printf '%s\n' 1 ;;
+    '#{pane_index}') printf '%s\n' 1 ;;
+    *) exit 1 ;;
+esac
+EOF
+chmod +x "$tmpbin/tmux"
+
+result=$(
+    (
+        cd "$repo_dir" || exit 1
+        HOME="$tmux_home" \
+        PATH="$tmpbin:$PATH" \
+        TMUX="/tmp/test,1,0" \
+        TMUX_PANE="%0" \
+        "$PLUGIN_DIR/scripts/claude-session-args.sh" --tmux-resume
+    ) 2>/dev/null | bracket_argv_lines
+)
+assert_eq "session args helper finds adjacent checkout finder" \
+    "[--resume]|[session-redbot]|[--name]|[redbot]" \
+    "$result"
+
+rm -f "$project_dir/session-redbot.jsonl"
+unsafe_sid=$(printf 'session-redbot\n--resume\nevil')
+printf '%s\n' '{"type":"custom-title","customTitle":"redbot"}' > "$project_dir/$unsafe_sid.jsonl"
+
+result=$(
+    (
+        cd "$repo_dir" || exit 1
+        HOME="$tmux_home" \
+        PATH="$tmpbin:$PATH" \
+        TMUX="/tmp/test,1,0" \
+        TMUX_PANE="%0" \
+        TMUX_CLAUDE_PLUGIN_DIR="$PLUGIN_DIR" \
+        "$PLUGIN_DIR/scripts/claude-session-args.sh" --tmux-resume
+    ) 2>/dev/null | bracket_argv_lines
+)
+assert_eq "session args helper ignores unsafe resume ids" "[--name]|[redbot]" "$result"
+assert_not_contains "unsafe resume id does not inject extra argv" "[evil]" "$result"
+
+rm -f "$project_dir/$unsafe_sid.jsonl"
+printf '%s\n' '{"type":"custom-title","customTitle":"redbot"}' > "$project_dir/--continue.jsonl"
+
+result=$(
+    (
+        cd "$repo_dir" || exit 1
+        HOME="$tmux_home" \
+        PATH="$tmpbin:$PATH" \
+        TMUX="/tmp/test,1,0" \
+        TMUX_PANE="%0" \
+        TMUX_CLAUDE_PLUGIN_DIR="$PLUGIN_DIR" \
+        "$PLUGIN_DIR/scripts/claude-session-args.sh" --tmux-resume
+    ) 2>/dev/null | bracket_argv_lines
+)
+assert_eq "session args helper ignores option-shaped resume ids" "[--name]|[redbot]" "$result"
+assert_not_contains "option-shaped resume id is not emitted" "[--continue]" "$result"
+
+rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
@@ -1655,6 +1757,21 @@ if command -v fish &>/dev/null; then
         __tmux_claude_session_args
     " 2>/dev/null | tr '\n' ' ' | sed 's/ $//')
     assert_eq "empty pane_count: no suffix" "--name solo" "$result"
+
+    result=$(fish -c "
+        source $PLUGIN_DIR/shell/__tmux_claude_session_args.fish
+        set -gx TMUX '/tmp/test,1,0'
+        set -gx TMUX_PANE '%0'
+        function tmux
+            switch \$argv[5]
+                case '#{window_name}'; printf '%s\n' good --resume evil
+                case '#{window_panes}'; echo 1
+                case '#{pane_index}'; echo 1
+            end
+        end
+        __tmux_claude_session_args
+    " 2>/dev/null | bracket_argv_lines)
+    assert_eq "newline window name remains one sanitized argv word" "[--name]|[good---resume-evil]" "$result"
 else
     echo "  SKIP: fish not installed"
 fi
@@ -1725,6 +1842,113 @@ EOF
 else
     echo "  SKIP: fish not installed"
 fi
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+tmux_home="$tmpdir/home"
+repo_dir="$tmpdir/repo"
+mkdir -p "$tmpbin" "$tmux_home" "$repo_dir"
+project_dir="$tmux_home/.claude/projects/$(printf '%s' "$repo_dir" | tr '/.' '--')"
+mkdir -p "$project_dir"
+echo '{"type":"custom-title","customTitle":"redbot"}' > "$project_dir/session-redbot.jsonl"
+
+cat > "$tmpbin/claude" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$@"
+EOF
+chmod +x "$tmpbin/claude"
+
+cat > "$tmpbin/tmux" <<'EOF'
+#!/usr/bin/env bash
+case "$5" in
+    '#{window_name}') printf '%s\n' redbot ;;
+    '#{window_panes}') printf '%s\n' 1 ;;
+    '#{pane_index}') printf '%s\n' 1 ;;
+    *) exit 1 ;;
+esac
+EOF
+chmod +x "$tmpbin/tmux"
+
+run_bash_wrapper_args() {
+    local extra="$1"
+    (
+        cd "$repo_dir" || exit 1
+        HOME="$tmux_home" \
+        PATH="$tmpbin:$PATH" \
+        TMUX="/tmp/test,1,0" \
+        TMUX_PANE="%0" \
+        TMUX_CLAUDE_PLUGIN_DIR="$PLUGIN_DIR" \
+        bash -c "source \"\$TMUX_CLAUDE_PLUGIN_DIR/shell/claude.bash\"; claude $extra"
+    ) 2>/dev/null | bracket_argv_lines
+}
+
+result=$(run_bash_wrapper_args "")
+assert_eq "bash wrapper fresh default names without resume" "[--name]|[redbot]" "$result"
+
+result=$(run_bash_wrapper_args "--tmux-resume")
+assert_eq "bash wrapper opt-in resume finds matching title" "[--resume]|[session-redbot]|[--name]|[redbot]" "$result"
+assert_not_contains "bash wrapper strips internal resume flag" "--tmux-resume" "$result"
+
+checkout_dir="$tmpdir/non-default-checkout"
+mkdir -p "$checkout_dir/shell" "$checkout_dir/scripts"
+cp "$PLUGIN_DIR/shell/claude.bash" "$checkout_dir/shell/claude.bash"
+cp "$PLUGIN_DIR/shell/claude.zsh" "$checkout_dir/shell/claude.zsh"
+cp "$PLUGIN_DIR/scripts/claude-session-args.sh" "$checkout_dir/scripts/claude-session-args.sh"
+cp "$PLUGIN_DIR/scripts/claude-find-session.py" "$checkout_dir/scripts/claude-find-session.py"
+chmod +x "$checkout_dir/scripts/claude-session-args.sh" "$checkout_dir/scripts/claude-find-session.py"
+
+result=$(
+    (
+        cd "$repo_dir" || exit 1
+        HOME="$tmux_home" \
+        PATH="$tmpbin:$PATH" \
+        TMUX="/tmp/test,1,0" \
+        TMUX_PANE="%0" \
+        bash -c "source \"$checkout_dir/shell/claude.bash\"; claude"
+    ) 2>/dev/null | bracket_argv_lines
+)
+assert_eq "bash wrapper finds helper relative to sourced checkout" "[--name]|[redbot]" "$result"
+
+if command -v zsh &>/dev/null; then
+    run_zsh_wrapper_args() {
+        local extra="$1"
+        (
+            cd "$repo_dir" || exit 1
+            HOME="$tmux_home" \
+            PATH="$tmpbin:$PATH" \
+            TMUX="/tmp/test,1,0" \
+            TMUX_PANE="%0" \
+            TMUX_CLAUDE_PLUGIN_DIR="$PLUGIN_DIR" \
+            zsh -c "source \"\$TMUX_CLAUDE_PLUGIN_DIR/shell/claude.zsh\"; claude $extra"
+        ) 2>/dev/null | bracket_argv_lines
+    }
+
+    result=$(run_zsh_wrapper_args "")
+    assert_eq "zsh wrapper fresh default names without resume" "[--name]|[redbot]" "$result"
+
+    result=$(run_zsh_wrapper_args "--tmux-resume")
+    assert_eq "zsh wrapper opt-in resume finds matching title" "[--resume]|[session-redbot]|[--name]|[redbot]" "$result"
+    assert_not_contains "zsh wrapper strips internal resume flag" "--tmux-resume" "$result"
+
+    result=$(
+        (
+            cd "$repo_dir" || exit 1
+            HOME="$tmux_home" \
+            PATH="$tmpbin:$PATH" \
+            TMUX="/tmp/test,1,0" \
+            TMUX_PANE="%0" \
+            zsh -c "source \"$checkout_dir/shell/claude.zsh\"; claude"
+        ) 2>/dev/null | bracket_argv_lines
+    )
+    assert_eq "zsh wrapper finds helper relative to sourced checkout" "[--name]|[redbot]" "$result"
+
+    unset -f run_zsh_wrapper_args
+else
+    echo "  SKIP: zsh not installed"
+fi
+
+unset -f run_bash_wrapper_args
+rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
