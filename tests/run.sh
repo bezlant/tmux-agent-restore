@@ -385,6 +385,24 @@ assert_eq "save writes eight fields" "" "$bad_field_count"
 rm -rf "$tmpdir"
 
 tmpdir=$(mktemp -d)
+existing_cwd="$tmpdir/project	with-tab"
+missing_cwd="$(printf '%s/line\nbreak/missing' "$existing_cwd")"
+setup_save_fixture "$tmpdir" codex "$CODEX_UUID_SAVE" "$missing_cwd"
+mkdir -p "$existing_cwd" "$tmpdir/home/.codex/sessions/2026/05/25"
+: > "$tmpdir/home/.codex/sessions/2026/05/25/rollout-2026-05-25T000000-$CODEX_UUID_SAVE.jsonl"
+printf 'work\twin\nline\n' > "$tmpdir/window_name"
+run_save_fixture "$tmpdir"
+raw_row=$(sed -n '3p' "$tmpdir/resurrect/claude-panes.txt" 2>/dev/null || true)
+data_line_count=$(tail -n +3 "$tmpdir/resurrect/claude-panes.txt" 2>/dev/null | wc -l | tr -d ' ')
+field_count=$(printf '%s\n' "$raw_row" | awk -F'\t' 'NR == 1 { print NF }')
+assert_eq "save encodes special chars as one physical row" "1" "$data_line_count"
+assert_eq "save encodes special chars without shifting fields" "8" "$field_count"
+assert_contains "save encodes tab in cwd/window fields" "%09" "$raw_row"
+assert_contains "save encodes newline in cwd/original/window fields" "%0A" "$raw_row"
+assert_contains "save marks encoded special fields" "field_encoded" "$raw_row"
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
 setup_save_fixture "$tmpdir" claude "$CLAUDE_UUID_SAVE" "$tmpdir/project"
 mkdir -p "$tmpdir/project" "$tmpdir/home/.claude/projects/work" "$tmpdir/resurrect/.claude-save.lock"
 : > "$tmpdir/home/.claude/projects/work/$CLAUDE_UUID_SAVE.jsonl"
@@ -485,6 +503,17 @@ assert_eq "save_flags_sid_invalid flag set" "sid_invalid" "$(printf '%s' "$row" 
 rm -rf "$tmpdir"
 
 tmpdir=$(mktemp -d)
+bad_sid="not-a-uuid"
+setup_save_fixture "$tmpdir" claude "$bad_sid" "$tmpdir/project"
+mkdir -p "$tmpdir/project"
+run_save_fixture "$tmpdir"
+row=$(snapshot_read "$tmpdir/resurrect/claude-panes.txt" 2>/dev/null)
+assert_eq "save_bad_sid_invalid sid degraded" "-" "$(printf '%s' "$row" | cut -f3)"
+assert_eq "save_bad_sid_invalid sid_kind none" "none" "$(printf '%s' "$row" | cut -f4)"
+assert_eq "save_bad_sid_invalid flag set" "sid_invalid" "$(printf '%s' "$row" | cut -f8)"
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
 existing_cwd="$tmpdir/project"
 missing_cwd="$existing_cwd/missing/deep"
 setup_save_fixture "$tmpdir" claude "$CLAUDE_UUID_SAVE" "$missing_cwd"
@@ -579,8 +608,8 @@ done
 # Regression: a codex pane whose foreground command is the real suffixed binary
 # name ("codex-aarch64-a") AND has a live claude subagent in its process tree
 # must still be saved as codex (via its valid @codex_session_id), not degraded
-# to "claude picker". Before save_pane_adapter_hint matched suffixed names, the
-# hint was dropped and adapter order (claude first) misclassified the pane.
+# to "claude picker". Before foreground adapter hinting matched suffixed names,
+# the hint was dropped and adapter order (claude first) misclassified the pane.
 tmpdir=$(mktemp -d)
 mkdir -p "$tmpdir/bin" "$tmpdir/resurrect" "$tmpdir/home" "$tmpdir/project"
 mkdir -p "$tmpdir/home/.codex/sessions/2026/06/15"
@@ -2747,6 +2776,61 @@ rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
+echo "=== lib/restore_readiness: shared save/audit rows ==="
+# ============================================================
+
+unset -f tmux live_agent_pid process_command extract_uuid adapter_detect_agent 2>/dev/null || true
+
+# shellcheck source=../lib/restore_readiness.sh
+. "$PLUGIN_DIR/lib/restore_readiness.sh"
+
+tmpdir=$(mktemp -d)
+mkdir -p "$tmpdir/project" "$tmpdir/bin" "$tmpdir/home/.codex/sessions"
+CODEX_READY_UUID="019ea610-ef51-7b51-8a40-6c2b946b6450"
+touch "$tmpdir/home/.codex/sessions/rollout-test-$CODEX_READY_UUID.jsonl"
+
+tmux() {
+    case "$1" in
+        display-message)
+            case "$*" in
+                *"#{pane_current_command}"*) printf '%s\n' codex-aarch64-a ;;
+                *"#{pane_current_path}"*) printf '%s\n' "$tmpdir/project/missing/deeper" ;;
+                *"#{window_name}"*) printf '%s\n' hsk ;;
+                *) return 1 ;;
+            esac
+            ;;
+        show-options)
+            case "$*" in
+                *"@codex_session_id"*) printf '%s\n' "$CODEX_READY_UUID" ;;
+                *"@codex_session_pid"*) printf '%s\n' 999 ;;
+                *"@codex_cwd"*) printf '%s\n' "$tmpdir/project/missing/deeper" ;;
+                *) return 1 ;;
+            esac
+            ;;
+        *) return 1 ;;
+    esac
+}
+live_agent_pid() { printf '%s\n' 111; }
+process_command() { printf '%s\n' "codex-aarch64-a exec"; }
+
+row=$(HOME="$tmpdir/home" restore_readiness_pane_row "0:4.1")
+assert_eq "restore readiness target" "0:4.1" "$(printf '%s' "$row" | cut -f1)"
+assert_eq "restore readiness tool" "codex" "$(printf '%s' "$row" | cut -f2)"
+assert_eq "restore readiness trusts valid stale pid" "$CODEX_READY_UUID" "$(printf '%s' "$row" | cut -f3)"
+assert_eq "restore readiness marks uuid kind" "uuid" "$(printf '%s' "$row" | cut -f4)"
+assert_eq "restore readiness collapses cwd" "$tmpdir/project" "$(printf '%s' "$row" | cut -f5)"
+assert_eq "restore readiness preserves original cwd" "$tmpdir/project/missing/deeper" "$(printf '%s' "$row" | cut -f6)"
+assert_eq "restore readiness window name" "hsk" "$(printf '%s' "$row" | cut -f7)"
+assert_contains "restore readiness composes flags" "pid_mismatch_trusted" "$(printf '%s' "$row" | cut -f8)"
+assert_contains "restore readiness composes collapsed flag" "cwd_collapsed" "$(printf '%s' "$row" | cut -f8)"
+assert_eq "restore readiness flag helper matches exact flag" "0" "$(restore_readiness_flag_has "sid_invalid;cwd_collapsed" "sid_invalid"; echo $?)"
+assert_eq "restore readiness flag helper rejects substring" "1" "$(restore_readiness_flag_has "not_sid_invalid" "sid_invalid"; echo $?)"
+
+rm -rf "$tmpdir"
+unset -f tmux live_agent_pid process_command
+
+# ============================================================
+echo ""
 echo "=== adapters: claude ==="
 # ============================================================
 # shellcheck source=../adapters/10-claude.sh
@@ -4664,6 +4748,82 @@ assert_contains "audit reports target" "0:1.1" "$audit_output"
 assert_contains "audit reports codex tool" "codex" "$audit_output"
 assert_contains "audit reports codex uuid" "$audit_sid" "$audit_output"
 assert_contains "audit reports pid mismatch trusted" "pid_mismatch_trusted" "$audit_output"
+
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+tmpbin="$tmpdir/bin"
+tmphome="$tmpdir/home"
+mkdir -p "$tmpbin" "$tmphome"
+
+bad_audit_sid="not-a-uuid"
+
+cat > "$tmpbin/tmux" <<EOF
+#!/usr/bin/env bash
+case "\$1" in
+    list-sessions)
+        printf '%s\n' 0
+        ;;
+    list-windows)
+        printf '%s\n' 1
+        ;;
+    list-panes)
+        printf '%s\n' 1
+        ;;
+    display-message)
+        case "\$*" in
+            *"#{window_name}"*) printf '%s\n' audit ;;
+            *"#{pane_current_command}"*) printf '%s\n' codex-aarch64-a ;;
+            *"#{pane_current_path}"*) printf '%s\n' /repo ;;
+            *"#{pane_pid}"*) printf '%s\n' 100 ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    show-options)
+        option=""
+        while [ "\$#" -gt 0 ]; do
+            if [ "\$1" = "-v" ]; then
+                shift
+                option="\${1:-}"
+                break
+            fi
+            shift
+        done
+        case "\$option" in
+            @codex_session_id) printf '%s\n' "$bad_audit_sid" ;;
+            @codex_session_pid) printf '%s\n' 200 ;;
+            @codex_cwd) printf '%s\n' /repo ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+EOF
+chmod +x "$tmpbin/tmux"
+
+cat > "$tmpbin/ps" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = "-axww" ] && [ "$2" = "-o" ] && [ "$3" = "pid=,ppid=,command=" ]; then
+    printf '%s\n' "100 1 fish" "200 100 codex-aarch64-a exec"
+elif [ "$1" = "-p" ] && [ "$3" = "-o" ] && [ "$4" = "command=" ]; then
+    printf '%s\n' "codex-aarch64-a exec"
+else
+    exit 1
+fi
+EOF
+chmod +x "$tmpbin/ps"
+
+old_path="$PATH"
+PATH="$tmpbin:$PATH"
+audit_output=$(HOME="$tmphome" bash "$PLUGIN_DIR/scripts/session-audit.sh" 2>&1)
+audit_rc=$?
+PATH="$old_path"
+
+assert_eq "audit exits nonzero for invalid UUID" "1" "$audit_rc"
+assert_contains "audit reports original invalid sid" "$bad_audit_sid" "$audit_output"
+assert_contains "audit reports invalid sid flag" "sid_invalid" "$audit_output"
 
 rm -rf "$tmpdir"
 

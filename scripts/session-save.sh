@@ -7,8 +7,8 @@ CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # shellcheck source=../lib/snapshot.sh
 . "$CURRENT_DIR/lib/snapshot.sh"
-# shellcheck source=../lib/adapters.sh
-. "$CURRENT_DIR/lib/adapters.sh"
+# shellcheck source=../lib/restore_readiness.sh
+. "$CURRENT_DIR/lib/restore_readiness.sh"
 
 RESURRECT_DIR=$(tmux show-option -gqv @resurrect-dir 2>/dev/null || true)
 RESURRECT_DIR="${RESURRECT_DIR:-$HOME/.tmux/resurrect}"
@@ -118,82 +118,6 @@ save_lock_acquire() {
     fi
 }
 
-save_add_flag() {
-    local current="$1"
-    local flag="$2"
-
-    if [ -n "$current" ]; then
-        printf '%s;%s\n' "$current" "$flag"
-    else
-        printf '%s\n' "$flag"
-    fi
-}
-
-save_collapse_cwd() {
-    local cwd="$1"
-    local parent
-
-    [ -n "$cwd" ] || return 1
-    while [ "$cwd" != "/" ] && [ ! -d "$cwd" ]; do
-        case "$cwd" in
-            */*)
-                parent="${cwd%/*}"
-                [ "$parent" != "$cwd" ] || parent="/"
-                [ -n "$parent" ] || parent="/"
-                cwd="$parent"
-                ;;
-            *)
-                cwd="/"
-                ;;
-        esac
-    done
-    [ -d "$cwd" ] || return 1
-    printf '%s\n' "$cwd"
-}
-
-save_detect_field() {
-    local row="$1"
-    local field="$2"
-    printf '%s\n' "$row" | awk -F '\t' -v field="$field" 'NR == 1 { print $field }'
-}
-
-save_adapter_exists() {
-    local wanted="$1"
-    local adapter
-    for adapter in $(adapters_list); do
-        [ "$adapter" = "$wanted" ] && return 0
-    done
-    return 1
-}
-
-save_pane_adapter_hint() {
-    local target="$1"
-    local cmd adapter
-    cmd=$(tmux display-message -p -t "$target" '#{pane_current_command}' 2>/dev/null || true)
-    # The foreground command is the real binary name, e.g. "codex-aarch64-a" or
-    # "claude.exe", never a bare "codex"/"claude". Match substrings so the hint
-    # picks the adapter for the pane's actual foreground tool; otherwise the
-    # hint is dropped and detection falls back to adapter order (claude first),
-    # which can misclassify a codex pane that has a live claude subagent.
-    case "$cmd" in
-        vim|nvim)
-            adapter="nvim"
-            ;;
-        *codex*|*Codex*|*CODEX*)
-            adapter="codex"
-            ;;
-        *claude*|*Claude*|*CLAUDE*)
-            adapter="claude"
-            ;;
-        *)
-            adapter="$cmd"
-            ;;
-    esac
-    [ -n "$adapter" ] || return 1
-    save_adapter_exists "$adapter" || return 1
-    printf '%s\n' "$adapter"
-}
-
 mkdir -p "$RESURRECT_DIR"
 
 save_lock_acquire || exit 0
@@ -223,62 +147,17 @@ while IFS= read -r session || [ -n "$session" ]; do
             [ -n "$pane" ] || continue
 
             target="$session:$win.$pane"
-            detect_row=""
-            preferred_adapter=$(save_pane_adapter_hint "$target" || true)
-            if [ -n "$preferred_adapter" ]; then
-                detect_fn="${preferred_adapter}_detect"
-                if declare -F "$detect_fn" >/dev/null 2>&1 &&
-                    detect_row=$("$detect_fn" "$target" 2>/dev/null); then
-                    [ -n "$detect_row" ] || detect_row=""
-                else
-                    detect_row=""
-                fi
-            fi
-            for adapter in $(adapters_list); do
-                [ -n "$detect_row" ] && break
-                [ "$adapter" = "$preferred_adapter" ] && continue
-                detect_fn="${adapter}_detect"
-                if declare -F "$detect_fn" >/dev/null 2>&1 &&
-                    detect_row=$("$detect_fn" "$target" 2>/dev/null); then
-                    [ -n "$detect_row" ] && break
-                fi
-                detect_row=""
-            done
-            [ -n "$detect_row" ] || continue
+            restore_readiness_pane "$target" save 2>/dev/null || continue
 
-            tool=$(save_detect_field "$detect_row" 1)
-            sid=$(save_detect_field "$detect_row" 2)
-            sid_kind=$(save_detect_field "$detect_row" 3)
-            cwd=$(save_detect_field "$detect_row" 4)
-            detect_flags=$(save_detect_field "$detect_row" 5)
-            if [ -z "$cwd" ]; then
-                cwd=$(tmux display-message -p -t "$target" '#{pane_current_path}' 2>/dev/null || true)
-            fi
-            wname=$(tmux display-message -p -t "$target" '#{window_name}' 2>/dev/null || true)
-
-            original_cwd=""
-            flags="$detect_flags"
-
-            if [ "$sid_kind" = "uuid" ]; then
-                validate_fn="${tool}_validate"
-                if ! declare -F "$validate_fn" >/dev/null 2>&1 ||
-                    ! "$validate_fn" "$sid" "$sid_kind" >/dev/null 2>&1; then
-                    sid="-"
-                    sid_kind="none"
-                    flags=$(save_add_flag "$flags" sid_invalid)
-                fi
-            fi
-
-            if [ -n "$cwd" ] && [ ! -d "$cwd" ]; then
-                original_cwd="$cwd"
-                collapsed_cwd=$(save_collapse_cwd "$cwd" 2>/dev/null || true)
-                if [ -n "$collapsed_cwd" ]; then
-                    cwd="$collapsed_cwd"
-                fi
-                flags=$(save_add_flag "$flags" cwd_collapsed)
-            fi
-
-            snapshot_write_row "$target" "$tool" "$sid" "$sid_kind" "$cwd" "$original_cwd" "$wname" "$flags" >> "$tmpfile"
+            snapshot_write_row \
+                "$RESTORE_READY_TARGET" \
+                "$RESTORE_READY_TOOL" \
+                "$RESTORE_READY_SID" \
+                "$RESTORE_READY_SID_KIND" \
+                "$RESTORE_READY_CWD" \
+                "$RESTORE_READY_ORIGINAL_CWD" \
+                "$RESTORE_READY_WNAME" \
+                "$RESTORE_READY_FLAGS" >> "$tmpfile"
             pane_count=$((pane_count + 1))
         done < <(tmux list-panes -t "$session:$win" -F '#{pane_index}' 2>/dev/null || true)
     done < <(tmux list-windows -t "$session" -F '#{window_index}' 2>/dev/null || true)
