@@ -22,6 +22,8 @@ snapshot_log() {
 . "$CURRENT_DIR/lib/quote.sh"
 # shellcheck source=../lib/restore_helpers.sh
 . "$CURRENT_DIR/lib/restore_helpers.sh"
+# shellcheck source=../lib/restore_plan.sh
+. "$CURRENT_DIR/lib/restore_plan.sh"
 
 RESURRECT_DIR=$(tmux show-option -gqv @resurrect-dir 2>/dev/null || true)
 RESURRECT_DIR="${RESURRECT_DIR:-$HOME/.tmux/resurrect}"
@@ -157,48 +159,54 @@ while IFS= read -r row || [ -n "$row" ]; do
         continue
     fi
 
-    if ! resolved_target=$(restore_resolve_target "$target" "$wname"); then
-        current_wname=$(tmux display-message -p -t "$target" '#{window_name}' 2>/dev/null || true)
-        [ -n "$current_wname" ] || current_wname="-"
-        log_current_wname=$(restore_log_value "$current_wname")
-        skip=$((skip + 1))
-        restore_log SKIP "$log_target $log_tool window_mismatch current=$log_current_wname saved=$log_wname"
-        continue
-    fi
+    restore_plan_build "$target" "$tool" "$sid" "$sid_kind" "$cwd" "$original_cwd" "$wname" "$flags" "$argv_tmp"
 
-    target="$resolved_target"
-    log_target=$(restore_log_value "$target")
+    case "$RESTORE_PLAN_STATUS" in
+        ok)
+            target="$RESTORE_PLAN_TARGET"
+            tool="$RESTORE_PLAN_TOOL"
+            full="$RESTORE_PLAN_FULL"
+            log_target=$(restore_log_value "$target")
+            log_tool=$(restore_log_value "$tool")
+            printf "%-12s %-8s %-8s %s\n" "$log_target" "($log_wname)" "$log_tool" "$log_sid"
+            ;;
+        skip)
+            skip_target="$RESTORE_PLAN_TARGET"
+            skip_tool="$RESTORE_PLAN_TOOL"
+            skip_reason="$RESTORE_PLAN_REASON"
+            log_target=$(restore_log_value "$skip_target")
+            log_tool=$(restore_log_value "$skip_tool")
 
-    printf "%-12s %-8s %-8s %s\n" "$log_target" "($log_wname)" "$log_tool" "$log_sid"
+            case "$skip_reason" in
+                missing_adapter|adapter_error|quote_argv_failed)
+                    printf "%-12s %-8s %-8s %s\n" "$log_target" "($log_wname)" "$log_tool" "$log_sid"
+                    ;;
+            esac
 
-    restore_fn="${tool}_restore_argv"
-    if ! declare -F "$restore_fn" >/dev/null 2>&1; then
-        skip=$((skip + 1))
-        restore_log SKIP "target=$log_target tool=$log_tool missing_adapter"
-        continue
-    fi
-
-    display_name=$(restore_make_display_name "$wname" "$target")
-    : > "$argv_tmp"
-    if ! "$restore_fn" "$sid" "$sid_kind" "$cwd" "$display_name" > "$argv_tmp" 2>/dev/null; then
-        skip=$((skip + 1))
-        restore_log SKIP "$log_target $log_tool adapter_error"
-        continue
-    fi
-
-    pane_shell=$(tmux display-message -p -t "$target" '#{pane_current_command}' 2>/dev/null || true)
-    case "$pane_shell" in
-        fish|bash|zsh|sh|dash|ksh) ;;
-        *) pane_shell="sh" ;;
+            skip=$((skip + 1))
+            case "$skip_reason" in
+                window_mismatch)
+                    log_current_wname=$(restore_log_value "$RESTORE_PLAN_CURRENT_WNAME")
+                    restore_log SKIP "$log_target $log_tool window_mismatch current=$log_current_wname saved=$log_wname"
+                    ;;
+                missing_adapter)
+                    restore_log SKIP "target=$log_target tool=$log_tool missing_adapter"
+                    ;;
+                quote_argv_failed)
+                    restore_log SKIP "target=$log_target tool=$log_tool quote_argv_failed"
+                    ;;
+                *)
+                    restore_log SKIP "$log_target $log_tool $skip_reason"
+                    ;;
+            esac
+            continue
+            ;;
+        *)
+            skip=$((skip + 1))
+            restore_log SKIP "$log_target $log_tool restore_plan_invalid"
+            continue
+            ;;
     esac
-
-    if ! cmd=$(shell_quote_argv_file "$pane_shell" "$argv_tmp"); then
-        skip=$((skip + 1))
-        restore_log SKIP "target=$log_target tool=$log_tool quote_argv_failed"
-        continue
-    fi
-    cwd_q=$(shell_quote_word "$pane_shell" "$cwd")
-    full="cd $cwd_q 2>/dev/null || cd; $cmd"
 
     if $DRY_RUN; then
         display_full=$(restore_log_value "$full")

@@ -3748,6 +3748,85 @@ rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
+echo "=== lib/restore_plan: build executable restore actions ==="
+# ============================================================
+
+unset -f tmux 2>/dev/null || true
+# shellcheck source=../lib/restore_log.sh
+. "$PLUGIN_DIR/lib/restore_log.sh"
+# shellcheck source=../adapters/10-claude.sh
+. "$PLUGIN_DIR/adapters/10-claude.sh"
+if [ -f "$PLUGIN_DIR/lib/restore_plan.sh" ]; then
+    # shellcheck source=../lib/restore_plan.sh
+    . "$PLUGIN_DIR/lib/restore_plan.sh"
+fi
+
+if declare -F restore_plan_build >/dev/null 2>&1; then
+    restore_plan_loaded=defined
+else
+    restore_plan_loaded=missing
+fi
+assert_eq "restore plan module loaded" "defined" "$restore_plan_loaded"
+
+if [ "$restore_plan_loaded" = "defined" ]; then
+    tmpdir=$(mktemp -d)
+    argv_tmp="$tmpdir/argv"
+
+    tmux() {
+        case "$1" in
+            display-message)
+                case "$*" in
+                    *"#{window_name}"*) printf '%s\n' work ;;
+                    *"#{pane_current_command}"*) printf '%s\n' fish ;;
+                    *) return 1 ;;
+                esac
+                ;;
+            list-panes) printf '%s\n' 1 ;;
+            *) return 1 ;;
+        esac
+    }
+
+    restore_plan_build "0:1.1" "claude" "0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf" "uuid" "$tmpdir" "" "work" "" "$argv_tmp"
+    assert_eq "restore plan status" "ok" "$RESTORE_PLAN_STATUS"
+    assert_eq "restore plan target" "0:1.1" "$RESTORE_PLAN_TARGET"
+    assert_contains "restore plan command includes cd" "cd '$tmpdir'" "$RESTORE_PLAN_FULL"
+    assert_contains "restore plan command includes claude resume" "'ccy' '--name' 'work' '--resume' '0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf'" "$RESTORE_PLAN_FULL"
+
+    tab_newline_cwd=$(printf '%s/tab\tcwd\nline' "$tmpdir")
+    restore_plan_build "0:1.1" "claude" "0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf" "uuid" "$tab_newline_cwd" "" "work" "" "$argv_tmp"
+    case "$RESTORE_PLAN_FULL" in
+        *"$tab_newline_cwd"*) preserved_cwd=present ;;
+        *) preserved_cwd=absent ;;
+    esac
+    assert_eq "restore plan preserves tab/newline cwd without TSV corruption" "present" "$preserved_cwd"
+
+    mismatch_wname=$(printf 'current\ttab\nline')
+    tmux() {
+        case "$1" in
+            display-message)
+                case "$*" in
+                    *"#{window_name}"*) printf '%s\n' "$mismatch_wname" ;;
+                    *"#{pane_current_command}"*) printf '%s\n' fish ;;
+                    *) return 1 ;;
+                esac
+                ;;
+            list-windows) return 0 ;;
+            list-panes) printf '%s\n' 1 ;;
+            *) return 1 ;;
+        esac
+    }
+
+    restore_plan_build "0:1.1" "claude" "0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf" "uuid" "$tmpdir" "" "saved" "" "$argv_tmp"
+    assert_eq "restore plan mismatch skips" "skip" "$RESTORE_PLAN_STATUS"
+    assert_eq "restore plan mismatch reason" "window_mismatch" "$RESTORE_PLAN_REASON"
+    assert_eq "restore plan preserves tab/newline current window" "$mismatch_wname" "$RESTORE_PLAN_CURRENT_WNAME"
+
+    rm -rf "$tmpdir"
+    unset -f tmux
+fi
+
+# ============================================================
+echo ""
 echo "=== session-restore: dry-run adapter dispatch ==="
 # ============================================================
 
