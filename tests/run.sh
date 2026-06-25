@@ -6,50 +6,11 @@ set -uo pipefail
 
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DIR="$(dirname "$TESTS_DIR")"
-PASS=0
-FAIL=0
+pass=0
+fail=0
 
-red() { printf '\033[31m%s\033[0m\n' "$1"; }
-green() { printf '\033[32m%s\033[0m\n' "$1"; }
-
-assert_eq() {
-    local desc="$1" expected="$2" actual="$3"
-    if [ "$expected" = "$actual" ]; then
-        green "  PASS: $desc"
-        PASS=$((PASS + 1))
-    else
-        red "  FAIL: $desc"
-        red "    expected: $expected"
-        red "    actual:   $actual"
-        FAIL=$((FAIL + 1))
-    fi
-}
-
-assert_contains() {
-    local desc="$1" needle="$2" haystack="$3"
-    if echo "$haystack" | grep -qF -- "$needle"; then
-        green "  PASS: $desc"
-        PASS=$((PASS + 1))
-    else
-        red "  FAIL: $desc"
-        red "    expected to contain: $needle"
-        red "    actual: $haystack"
-        FAIL=$((FAIL + 1))
-    fi
-}
-
-assert_not_contains() {
-    local desc="$1" needle="$2" haystack="$3"
-    if ! echo "$haystack" | grep -qF -- "$needle"; then
-        green "  PASS: $desc"
-        PASS=$((PASS + 1))
-    else
-        red "  FAIL: $desc"
-        red "    expected NOT to contain: $needle"
-        red "    actual: $haystack"
-        FAIL=$((FAIL + 1))
-    fi
-}
+# shellcheck source=tests/lib/assertions.sh
+. "$PLUGIN_DIR/tests/lib/assertions.sh"
 
 bracket_argv_lines() {
     sed 's/^/[/' | sed 's/$/]/' | tr '\n' '|' | sed 's/|$//'
@@ -2763,7 +2724,7 @@ else
         # Don't silently skip; fail the test with the reason.
         red "  FAIL: snapshot_read returned $rc for live snapshot"
         red "    stderr: $err"
-        FAIL=$((FAIL + 1))
+        fail=$((fail + 1))
     else
         if [ -z "$rows" ]; then
             row_count=0
@@ -2779,7 +2740,7 @@ else
         if [ -n "$unexpected_logs" ]; then
             red "  FAIL: snapshot_read logged unexpected WARN/ERROR for live snapshot"
             red "    stderr: $err"
-            FAIL=$((FAIL + 1))
+            fail=$((fail + 1))
         fi
 
         # LEGACY warning expected for v1 input (current live format).
@@ -5596,7 +5557,7 @@ assert_contains "README documents audit nonzero behavior" "exits non-zero" "$rea
 # ============================================================
 echo ""
 echo "=== Results ==="
-echo "  Passed: $PASS"
-echo "  Failed: $FAIL"
-[ "$FAIL" -eq 0 ] && green "  ALL TESTS PASSED" || red "  SOME TESTS FAILED"
-exit "$FAIL"
+echo "  Passed: $pass"
+echo "  Failed: $fail"
+[ "$fail" -eq 0 ] && green "  ALL TESTS PASSED" || red "  SOME TESTS FAILED"
+exit "$fail"
