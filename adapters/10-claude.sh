@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tmux-claude adapter: Claude Code.
+# tmux-agent-restore adapter: Claude Code.
 
 if ! declare -F adapter_detect_agent >/dev/null 2>&1; then
     _adapter_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tmux-claude: best-effort restore logging.
+# tmux-agent-restore: best-effort restore logging.
 
 RESTORE_LOG_FD_OPEN=0
 RESTORE_LOG_PATH=""

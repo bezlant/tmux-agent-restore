@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tmux-claude: shared Claude/Codex SessionStart hook implementation.
+# tmux-agent-restore: shared Claude/Codex SessionStart hook implementation.
 
 session_hook_command_matches_self() {
     local command="$1"
@@ -111,7 +111,7 @@ session_hook_run() {
     [ -n "$cwd" ] && tmux set-option -p -t "$TMUX_PANE" "$cwd_option" "$cwd" 2>/dev/null || true
 
     if [ -x "$plugin_dir/scripts/session-save.sh" ]; then
-        bash "$plugin_dir/scripts/session-save.sh" >> /tmp/tmux-claude-save.log 2>&1 &
+        bash "$plugin_dir/scripts/session-save.sh" >> /tmp/tmux-agent-restore-save.log 2>&1 &
     fi
 
     return 0

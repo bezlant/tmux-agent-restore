@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tmux-claude: convert decoded snapshot rows into executable restore actions.
+# tmux-agent-restore: convert decoded snapshot rows into executable restore actions.
 #
 # shellcheck disable=SC2034
 # RESTORE_PLAN_* globals are the module's caller-read output API.

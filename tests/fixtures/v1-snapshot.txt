@@ -1,7 +1,0 @@
-# Claude/Codex session mapping — Sat May 24 12:00:00 +07 2026
-# Format: session:window.pane|tool|session_id|cwd|window_name
-0:1.1|codex|019dd3be-9166-7750-8039-a1f9ecdad1f3|/Users/me/proj|fine-tuning
-0:6.1|nvim|picker|/Users/me/proj|analytics
-0:15.1|claude|not-a-uuid|/Users/me/proj|tt-automation
-0:17.2|claude|64d862e0-29de-44a2-a854-8aecfe22dac4|/Users/me/proj|hack
-0:18.1|just|dev|/Users/me/proj/backend|sb

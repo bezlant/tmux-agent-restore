@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tmux-claude test runner
+# tmux-agent-restore test runner
 # Usage: bash tests/run.sh
 
 set -uo pipefail
@@ -15,60 +15,6 @@ fail=0
 bracket_argv_lines() {
     sed 's/^/[/' | sed 's/$/]/' | tr '\n' '|' | sed 's/|$//'
 }
-
-# ============================================================
-echo "=== session-restore: 5-field format parsing ==="
-# ============================================================
-
-tmpdir=$(mktemp -d)
-cat > "$tmpdir/claude-panes.txt" <<'EOF'
-# Claude/Codex session mapping — test
-# Format: session:window.pane|tool|session_id|cwd|window_name
-0:1.1|claude|aaaaaaaa-1111-2222-3333-444444444444|/Users/test/project|my-window
-0:2.1|codex|bbbbbbbb-5555-6666-7777-888888888888|/Users/test/other|codex-win
-0:3.1|claude|picker|/Users/test/project|picker-win
-0:4.1|codex|picker|/Users/test/project|codex-picker
-0:5.1|nvim|picker|/Users/test/project|editor
-0:6.1|just|dev|/Users/test/project|server
-EOF
-
-cmds=""
-while IFS='|' read -r target tool sid cwd wname; do
-    [[ "$target" =~ ^#.*$ ]] && continue
-    [ -z "$target" ] && continue
-    case "$tool" in
-        claude)
-            if [ "$sid" = "picker" ]; then
-                cmds="${cmds}cd \"$cwd\" && ccy --resume\n"
-            else
-                cmds="${cmds}cd \"$cwd\" && ccy --resume $sid\n"
-            fi
-            ;;
-        codex)
-            if [ "$sid" = "picker" ]; then
-                cmds="${cmds}cd \"$cwd\" && cxy resume\n"
-            else
-                cmds="${cmds}cd \"$cwd\" && cxy resume $sid\n"
-            fi
-            ;;
-        nvim)
-            cmds="${cmds}cd \"$cwd\" && nvim\n"
-            ;;
-        just)
-            cmds="${cmds}cd \"$cwd\" && just $sid\n"
-            ;;
-    esac
-done < "$tmpdir/claude-panes.txt"
-
-assert_contains "claude UUID gets ccy --resume UUID" "ccy --resume aaaaaaaa-1111-2222-3333-444444444444" "$cmds"
-assert_contains "codex UUID gets cxy resume UUID" "cxy resume bbbbbbbb-5555-6666-7777-888888888888" "$cmds"
-assert_contains "claude picker gets ccy --resume" "ccy --resume" "$cmds"
-assert_contains "codex picker gets cxy resume" "cxy resume" "$cmds"
-assert_contains "nvim pane opens nvim" "nvim" "$cmds"
-assert_contains "just pane runs recipe" "just dev" "$cmds"
-assert_eq "6 commands total" "6" "$(echo -e "$cmds" | grep -c '.')"
-
-rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
@@ -325,7 +271,7 @@ run_restore_fixture() {
     local fixture_dir="$1"
     local old_path="$PATH"
     PATH="$fixture_dir/bin:$PATH"
-    TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run > "$fixture_dir/restore.out" 2>"$fixture_dir/restore.err"
+    TMUX_AGENT_RESTORE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run > "$fixture_dir/restore.out" 2>"$fixture_dir/restore.err"
     local rc=$?
     PATH="$old_path"
     return "$rc"
@@ -342,7 +288,7 @@ run_save_fixture "$tmpdir"
 save_rc=$?
 assert_eq "save writes v2 fixture exits 0" "0" "$save_rc"
 assert_eq "save writes v2 header" \
-    "# tmux-claude snapshot v2" \
+    "# tmux-agent-restore snapshot v2" \
     "$(sed -n '1p' "$tmpdir/resurrect/claude-panes.txt" 2>/dev/null)"
 rows=$(snapshot_read "$tmpdir/resurrect/claude-panes.txt" 2>/dev/null)
 bad_field_count=$(printf '%s\n' "$rows" | awk -F'\t' 'NF != 8 { print NF; exit }')
@@ -371,11 +317,11 @@ tmpdir=$(mktemp -d)
 setup_save_fixture "$tmpdir" claude "$CLAUDE_UUID_SAVE" "$tmpdir/project"
 mkdir -p "$tmpdir/project" "$tmpdir/home/.claude/projects/work" "$tmpdir/resurrect/.claude-save.lock"
 : > "$tmpdir/home/.claude/projects/work/$CLAUDE_UUID_SAVE.jsonl"
-TMUX_CLAUDE_SAVE_LOCK_STALE_SECONDS=0 run_save_fixture "$tmpdir"
+TMUX_AGENT_RESTORE_SAVE_LOCK_STALE_SECONDS=0 run_save_fixture "$tmpdir"
 save_rc=$?
 assert_eq "save recovers stale empty lock exits 0" "0" "$save_rc"
 assert_eq "save recovers stale empty lock writes snapshot" \
-    "# tmux-claude snapshot v2" \
+    "# tmux-agent-restore snapshot v2" \
     "$(sed -n '1p' "$tmpdir/resurrect/claude-panes.txt" 2>/dev/null)"
 rm -rf "$tmpdir"
 
@@ -398,7 +344,7 @@ EOF
 chmod +x "$tmpdir/bin/stat"
 run_save_fixture "$tmpdir"
 assert_eq "save recovers stale lock with GNU stat fallback" \
-    "# tmux-claude snapshot v2" \
+    "# tmux-agent-restore snapshot v2" \
     "$(sed -n '1p' "$tmpdir/resurrect/claude-panes.txt" 2>/dev/null)"
 rm -rf "$tmpdir"
 
@@ -409,7 +355,7 @@ mkdir -p "$tmpdir/project" "$tmpdir/home/.claude/projects/work" "$tmpdir/resurre
 printf '%s\n' 999999 > "$tmpdir/resurrect/.claude-save.lock/pid"
 run_save_fixture "$tmpdir"
 assert_eq "save recovers stale dead-pid lock" \
-    "# tmux-claude snapshot v2" \
+    "# tmux-agent-restore snapshot v2" \
     "$(sed -n '1p' "$tmpdir/resurrect/claude-panes.txt" 2>/dev/null)"
 rm -rf "$tmpdir"
 
@@ -420,11 +366,11 @@ mkdir -p "$tmpdir/project" "$tmpdir/home/.claude/projects/work" "$tmpdir/resurre
 sleep 10 &
 sleep_pid=$!
 printf '%s\n' "$sleep_pid" > "$tmpdir/resurrect/.claude-save.lock/pid"
-TMUX_CLAUDE_SAVE_LOCK_STALE_SECONDS=0 run_save_fixture "$tmpdir"
+TMUX_AGENT_RESTORE_SAVE_LOCK_STALE_SECONDS=0 run_save_fixture "$tmpdir"
 kill "$sleep_pid" 2>/dev/null || true
 wait "$sleep_pid" 2>/dev/null || true
 assert_eq "save recovers stale unrelated-live-pid lock" \
-    "# tmux-claude snapshot v2" \
+    "# tmux-agent-restore snapshot v2" \
     "$(sed -n '1p' "$tmpdir/resurrect/claude-panes.txt" 2>/dev/null)"
 rm -rf "$tmpdir"
 
@@ -446,7 +392,7 @@ EOF
 chmod +x "$tmpdir/bin/ps"
 printf '%s\n' "$save_like_pid" > "$tmpdir/resurrect/.claude-save.lock/pid"
 printf '%s\n' "other-token" > "$tmpdir/resurrect/.claude-save.lock/token"
-TMUX_CLAUDE_SAVE_LOCK_STALE_SECONDS=0 TMUX_CLAUDE_SAVE_LOCK_ATTEMPTS=1 run_save_fixture "$tmpdir"
+TMUX_AGENT_RESTORE_SAVE_LOCK_STALE_SECONDS=0 TMUX_AGENT_RESTORE_SAVE_LOCK_ATTEMPTS=1 run_save_fixture "$tmpdir"
 kill "$save_like_pid" 2>/dev/null || true
 wait "$save_like_pid" 2>/dev/null || true
 assert_eq "save preserves active session-save lock snapshot" \
@@ -715,7 +661,7 @@ EOF
     ln -s "$SHARED_SESSION_HOOK" "$tmpdir/plugin/lib/session_hook.sh"
     cat > "$tmpdir/plugin/scripts/session-save.sh" <<'EOF'
 #!/usr/bin/env bash
-printf '%s\n' "save" >> "$TMUX_CLAUDE_PLUGIN_DIR/session-save.marker"
+printf '%s\n' "save" >> "$TMUX_AGENT_RESTORE_PLUGIN_DIR/session-save.marker"
 EOF
     chmod +x "$tmpdir/plugin/scripts/session-save.sh"
     cat > "$tmpdir/bin/ps" <<'EOF'
@@ -753,7 +699,7 @@ run_hook_fixture() {
     json="{\"session_id\":\"$session_id\",\"cwd\":\"$cwd\"}"
     TMUX=1 \
     TMUX_PANE="%1" \
-    TMUX_CLAUDE_PLUGIN_DIR="$tmpdir/plugin" \
+    TMUX_AGENT_RESTORE_PLUGIN_DIR="$tmpdir/plugin" \
     TMUX_HOOK_LOG="$tmpdir/tmux.log" \
     TMUX_STUB_PANE_COMMAND="$pane_command" \
     HOME="$tmpdir/home" \
@@ -772,7 +718,7 @@ run_hook_fixture_json() {
 
     TMUX=1 \
     TMUX_PANE="%1" \
-    TMUX_CLAUDE_PLUGIN_DIR="$tmpdir/plugin" \
+    TMUX_AGENT_RESTORE_PLUGIN_DIR="$tmpdir/plugin" \
     TMUX_HOOK_LOG="$tmpdir/tmux.log" \
     TMUX_STUB_PANE_COMMAND="$pane_command" \
     HOME="$tmpdir/home" \
@@ -789,7 +735,7 @@ write_shared_codex_hook_fixture() {
 #!/usr/bin/env bash
 set -euo pipefail
 
-PLUGIN_DIR="${TMUX_CLAUDE_PLUGIN_DIR:?}"
+PLUGIN_DIR="${TMUX_AGENT_RESTORE_PLUGIN_DIR:?}"
 
 # shellcheck source=../lib/process.sh
 . "$PLUGIN_DIR/lib/process.sh"
@@ -1068,54 +1014,6 @@ unset -f write_real_hook_ps_stub setup_real_hook_fixture
 
 # ============================================================
 echo ""
-echo "=== session-restore: paths with spaces ==="
-# ============================================================
-
-tmpdir=$(mktemp -d)
-cat > "$tmpdir/claude-panes.txt" <<'EOF'
-0:1.1|claude|abc-123|/Users/test/my project/src|spaced-path
-EOF
-
-cmds=""
-while IFS='|' read -r target tool sid cwd wname; do
-    [[ "$target" =~ ^#.*$ ]] && continue
-    [ -z "$target" ] && continue
-    if [ "$tool" = "claude" ]; then
-        cmds="cd \"$cwd\" && ccy --resume $sid"
-    fi
-done < "$tmpdir/claude-panes.txt"
-
-assert_contains "path with space is quoted" 'cd "/Users/test/my project/src"' "$cmds"
-
-rm -rf "$tmpdir"
-
-# ============================================================
-echo ""
-echo "=== session-restore: comment and blank line handling ==="
-# ============================================================
-
-tmpdir=$(mktemp -d)
-cat > "$tmpdir/claude-panes.txt" <<'EOF'
-# This is a comment
-# Another comment
-
-0:1.1|claude|abc-123|/tmp|win1
-
-EOF
-
-count=0
-while IFS='|' read -r target tool sid cwd wname; do
-    [[ "$target" =~ ^#.*$ ]] && continue
-    [ -z "$target" ] && continue
-    count=$((count + 1))
-done < "$tmpdir/claude-panes.txt"
-
-assert_eq "skips comments and blanks, finds 1 entry" "1" "$count"
-
-rm -rf "$tmpdir"
-
-# ============================================================
-echo ""
 echo "=== fish wrapper: skip flag detection ==="
 # ============================================================
 
@@ -1124,8 +1022,7 @@ if command -v fish &>/dev/null; then
         local flags="$1" expected="$2"
         local result
         result=$(fish -c "
-            source $PLUGIN_DIR/shell/__tmux_claude_find_session.fish
-            source $PLUGIN_DIR/shell/__tmux_claude_session_args.fish
+            source $PLUGIN_DIR/shell/__tmux_agent_restore_session_args.fish
             set -gx TMUX '/tmp/test,1,0'
             set -gx TMUX_PANE '%0'
             function tmux
@@ -1135,7 +1032,7 @@ if command -v fish &>/dev/null; then
                     case '#{pane_index}'; echo 1
                 end
             end
-            set result (__tmux_claude_session_args $flags)
+            set result (__tmux_agent_restore_session_args $flags)
             test -n \"\$result\"; and echo 'injected'; or echo 'skipped'
         " 2>/dev/null)
         assert_eq "flags '$flags' -> $expected" "$expected" "$result"
@@ -1158,236 +1055,6 @@ fi
 
 # ============================================================
 echo ""
-echo "=== session lookup: JSONL customTitle matching ==="
-# ============================================================
-
-if command -v fish &>/dev/null && command -v python3 &>/dev/null; then
-    fixture_dir=$(mktemp -d)
-
-    # Create test JSONL files with proper customTitle entries
-    echo '{"type":"custom-title","customTitle":"redbot.2"}' > "$fixture_dir/aaaa-1111.jsonl"
-    echo '{"type":"custom-title","customTitle":"other-session"}' > "$fixture_dir/bbbb-2222.jsonl"
-    # False positive test: target appears in a non-customTitle field
-    echo '{"type":"custom-title","customTitle":"unrelated","notes":"redbot.2"}' > "$fixture_dir/cccc-3333.jsonl"
-    # Ensure mtime ordering: touch aaaa last so it's "newest"
-    sleep 0.1
-    touch "$fixture_dir/aaaa-1111.jsonl"
-
-    # Test: exact match returns correct UUID
-    result=$(fish -c "
-        source $PLUGIN_DIR/shell/__tmux_claude_find_session.fish
-        function pwd; echo /test/dir; end
-        set -l HOME_backup \$HOME
-        python3 -c \"
-import os, sys, json
-d, target = sys.argv[1], sys.argv[2]
-files = []
-for f in os.listdir(d):
-    if f.endswith('.jsonl'):
-        fp = os.path.join(d, f)
-        files.append((os.path.getmtime(fp), fp, f))
-files.sort(reverse=True)
-for _, fp, fname in files:
-    with open(fp) as fh:
-        for line in fh:
-            line = line.strip()
-            if not line: continue
-            try: obj = json.loads(line)
-            except: continue
-            if obj.get('type') == 'custom-title':
-                if obj.get('customTitle') == target:
-                    print(fname[:-6])
-                    sys.exit(0)
-                break
-\" '$fixture_dir' 'redbot.2'
-    " 2>/dev/null)
-    assert_eq "exact match finds correct session" "aaaa-1111" "$result"
-
-    # Test: no match returns empty
-    result=$(fish -c "
-        python3 -c \"
-import os, sys, json
-d, target = sys.argv[1], sys.argv[2]
-files = []
-for f in os.listdir(d):
-    if f.endswith('.jsonl'):
-        fp = os.path.join(d, f)
-        files.append((os.path.getmtime(fp), fp, f))
-files.sort(reverse=True)
-for _, fp, fname in files:
-    with open(fp) as fh:
-        for line in fh:
-            line = line.strip()
-            if not line: continue
-            try: obj = json.loads(line)
-            except: continue
-            if obj.get('type') == 'custom-title':
-                if obj.get('customTitle') == target:
-                    print(fname[:-6])
-                    sys.exit(0)
-                break
-\" '$fixture_dir' 'nonexistent'
-    " 2>/dev/null)
-    assert_eq "no match returns empty" "" "$result"
-
-    # Test: does NOT false-positive on target in other fields
-    result=$(fish -c "
-        python3 -c \"
-import os, sys, json
-d, target = sys.argv[1], sys.argv[2]
-files = []
-for f in os.listdir(d):
-    if f.endswith('.jsonl'):
-        fp = os.path.join(d, f)
-        files.append((os.path.getmtime(fp), fp, f))
-files.sort(reverse=True)
-for _, fp, fname in files:
-    with open(fp) as fh:
-        for line in fh:
-            line = line.strip()
-            if not line: continue
-            try: obj = json.loads(line)
-            except: continue
-            if obj.get('type') == 'custom-title':
-                if obj.get('customTitle') == target:
-                    print(fname[:-6])
-                    sys.exit(0)
-                break
-\" '$fixture_dir' 'unrelated'
-    " 2>/dev/null)
-    assert_eq "does not false-positive on notes field" "cccc-3333" "$result"
-
-    # Test: substring of target does NOT match (redbot vs redbot.2)
-    result=$(fish -c "
-        python3 -c \"
-import os, sys, json
-d, target = sys.argv[1], sys.argv[2]
-files = []
-for f in os.listdir(d):
-    if f.endswith('.jsonl'):
-        fp = os.path.join(d, f)
-        files.append((os.path.getmtime(fp), fp, f))
-files.sort(reverse=True)
-for _, fp, fname in files:
-    with open(fp) as fh:
-        for line in fh:
-            line = line.strip()
-            if not line: continue
-            try: obj = json.loads(line)
-            except: continue
-            if obj.get('type') == 'custom-title':
-                if obj.get('customTitle') == target:
-                    print(fname[:-6])
-                    sys.exit(0)
-                break
-\" '$fixture_dir' 'redbot'
-    " 2>/dev/null)
-    assert_eq "substring does not match (redbot vs redbot.2)" "" "$result"
-
-    rm -rf "$fixture_dir"
-else
-    echo "  SKIP: fish or python3 not installed"
-fi
-
-# ============================================================
-echo ""
-echo "=== shared Claude session args helper ==="
-# ============================================================
-
-if command -v python3 &>/dev/null; then
-    tmpdir=$(mktemp -d)
-    fixture_dir="$tmpdir/projects"
-    mkdir -p "$fixture_dir"
-    unsafe_sid=$(printf 'session-redbot\n--resume\nevil')
-    printf '%s\n' '{"type":"custom-title","customTitle":"redbot"}' > "$fixture_dir/$unsafe_sid.jsonl"
-
-    result=$(python3 "$PLUGIN_DIR/scripts/claude-find-session.py" "$fixture_dir" redbot 2>/dev/null || true)
-    assert_eq "finder rejects session ids with embedded newlines" "" "$result"
-
-    rm -f "$fixture_dir/$unsafe_sid.jsonl"
-    printf '%s\n' '{"type":"custom-title","customTitle":"redbot"}' > "$fixture_dir/--continue.jsonl"
-
-    result=$(python3 "$PLUGIN_DIR/scripts/claude-find-session.py" "$fixture_dir" redbot 2>/dev/null || true)
-    assert_eq "finder rejects option-shaped session ids" "" "$result"
-
-    rm -rf "$tmpdir"
-else
-    echo "  SKIP: python3 not installed"
-fi
-
-tmpdir=$(mktemp -d)
-tmpbin="$tmpdir/bin"
-tmux_home="$tmpdir/home"
-repo_dir="$tmpdir/repo"
-mkdir -p "$tmpbin" "$tmux_home" "$repo_dir"
-project_dir="$tmux_home/.claude/projects/$(printf '%s' "$repo_dir" | tr '/.' '--')"
-mkdir -p "$project_dir"
-printf '%s\n' '{"type":"custom-title","customTitle":"redbot"}' > "$project_dir/session-redbot.jsonl"
-
-cat > "$tmpbin/tmux" <<'EOF'
-#!/usr/bin/env bash
-case "$5" in
-    '#{window_name}') printf '%s\n' redbot ;;
-    '#{window_panes}') printf '%s\n' 1 ;;
-    '#{pane_index}') printf '%s\n' 1 ;;
-    *) exit 1 ;;
-esac
-EOF
-chmod +x "$tmpbin/tmux"
-
-result=$(
-    (
-        cd "$repo_dir" || exit 1
-        HOME="$tmux_home" \
-        PATH="$tmpbin:$PATH" \
-        TMUX="/tmp/test,1,0" \
-        TMUX_PANE="%0" \
-        "$PLUGIN_DIR/scripts/claude-session-args.sh" --tmux-resume
-    ) 2>/dev/null | bracket_argv_lines
-)
-assert_eq "session args helper finds adjacent checkout finder" \
-    "[--resume]|[session-redbot]|[--name]|[redbot]" \
-    "$result"
-
-rm -f "$project_dir/session-redbot.jsonl"
-unsafe_sid=$(printf 'session-redbot\n--resume\nevil')
-printf '%s\n' '{"type":"custom-title","customTitle":"redbot"}' > "$project_dir/$unsafe_sid.jsonl"
-
-result=$(
-    (
-        cd "$repo_dir" || exit 1
-        HOME="$tmux_home" \
-        PATH="$tmpbin:$PATH" \
-        TMUX="/tmp/test,1,0" \
-        TMUX_PANE="%0" \
-        TMUX_CLAUDE_PLUGIN_DIR="$PLUGIN_DIR" \
-        "$PLUGIN_DIR/scripts/claude-session-args.sh" --tmux-resume
-    ) 2>/dev/null | bracket_argv_lines
-)
-assert_eq "session args helper ignores unsafe resume ids" "[--name]|[redbot]" "$result"
-assert_not_contains "unsafe resume id does not inject extra argv" "[evil]" "$result"
-
-rm -f "$project_dir/$unsafe_sid.jsonl"
-printf '%s\n' '{"type":"custom-title","customTitle":"redbot"}' > "$project_dir/--continue.jsonl"
-
-result=$(
-    (
-        cd "$repo_dir" || exit 1
-        HOME="$tmux_home" \
-        PATH="$tmpbin:$PATH" \
-        TMUX="/tmp/test,1,0" \
-        TMUX_PANE="%0" \
-        TMUX_CLAUDE_PLUGIN_DIR="$PLUGIN_DIR" \
-        "$PLUGIN_DIR/scripts/claude-session-args.sh" --tmux-resume
-    ) 2>/dev/null | bracket_argv_lines
-)
-assert_eq "session args helper ignores option-shaped resume ids" "[--name]|[redbot]" "$result"
-assert_not_contains "option-shaped resume id is not emitted" "[--continue]" "$result"
-
-rm -rf "$tmpdir"
-
-# ============================================================
-echo ""
 echo "=== fish wrapper: graceful degradation ==="
 # ============================================================
 
@@ -1398,7 +1065,7 @@ if command -v fish &>/dev/null; then
     result=$(fish -c "
         set -gx PATH $tmpbin \$PATH
         set -gx TMUX '/tmp/test,1,0'
-        functions -e __tmux_claude_session_args 2>/dev/null
+        functions -e __tmux_agent_restore_session_args 2>/dev/null
         source $PLUGIN_DIR/shell/claude.fish
         claude --version
     " 2>/dev/null)
@@ -1407,9 +1074,9 @@ if command -v fish &>/dev/null; then
     assert_not_contains "no --name when helper missing" "MOCK_ARGS: --name" "$result"
 
     result=$(fish -c "
-        source $PLUGIN_DIR/shell/__tmux_claude_session_args.fish
+        source $PLUGIN_DIR/shell/__tmux_agent_restore_session_args.fish
         set -e TMUX 2>/dev/null
-        set result (__tmux_claude_session_args --version)
+        set result (__tmux_agent_restore_session_args --version)
         test -n \"\$result\"; and echo 'injected'; or echo 'skipped'
     " 2>/dev/null)
     assert_eq "no injection outside tmux" "skipped" "$result"
@@ -1419,7 +1086,7 @@ fi
 
 # ============================================================
 echo ""
-echo "=== claude.tmux: hook chaining ==="
+echo "=== agent-restore.tmux: hook chaining ==="
 # ============================================================
 
 if [ -n "$TMUX" ]; then
@@ -1429,7 +1096,7 @@ if [ -n "$TMUX" ]; then
     tmux set-option -g @resurrect-hook-post-save-all "echo existing-save" 2>/dev/null
     tmux set-option -g @resurrect-hook-post-restore-all "echo existing-restore" 2>/dev/null
 
-    bash "$PLUGIN_DIR/claude.tmux" 2>/dev/null
+    bash "$PLUGIN_DIR/agent-restore.tmux" 2>/dev/null
 
     save_hook=$(tmux show-option -gqv @resurrect-hook-post-save-all 2>/dev/null)
     restore_hook=$(tmux show-option -gqv @resurrect-hook-post-restore-all 2>/dev/null)
@@ -1450,14 +1117,14 @@ if [ -n "$TMUX" ]; then
         tmux set-option -gu @resurrect-hook-post-restore-all 2>/dev/null
     fi
 
-    bash "$PLUGIN_DIR/claude.tmux" 2>/dev/null
+    bash "$PLUGIN_DIR/agent-restore.tmux" 2>/dev/null
 else
     echo "  SKIP: not in tmux"
 fi
 
 # ============================================================
 echo ""
-echo "=== claude.tmux: idempotent reload ==="
+echo "=== agent-restore.tmux: idempotent reload ==="
 # ============================================================
 
 if [ -n "$TMUX" ]; then
@@ -1467,8 +1134,8 @@ if [ -n "$TMUX" ]; then
     tmux set-option -gu @resurrect-hook-post-save-all 2>/dev/null
     tmux set-option -gu @resurrect-hook-post-restore-all 2>/dev/null
 
-    bash "$PLUGIN_DIR/claude.tmux" 2>/dev/null
-    bash "$PLUGIN_DIR/claude.tmux" 2>/dev/null
+    bash "$PLUGIN_DIR/agent-restore.tmux" 2>/dev/null
+    bash "$PLUGIN_DIR/agent-restore.tmux" 2>/dev/null
 
     save_hook=$(tmux show-option -gqv @resurrect-hook-post-save-all 2>/dev/null)
     restore_hook=$(tmux show-option -gqv @resurrect-hook-post-restore-all 2>/dev/null)
@@ -1481,8 +1148,8 @@ if [ -n "$TMUX" ]; then
 
     tmux set-option -gu @resurrect-hook-post-save-all 2>/dev/null
     tmux set-option -g @resurrect-hook-post-save-all "echo user-hook" 2>/dev/null
-    bash "$PLUGIN_DIR/claude.tmux" 2>/dev/null
-    bash "$PLUGIN_DIR/claude.tmux" 2>/dev/null
+    bash "$PLUGIN_DIR/agent-restore.tmux" 2>/dev/null
+    bash "$PLUGIN_DIR/agent-restore.tmux" 2>/dev/null
     save_hook=$(tmux show-option -gqv @resurrect-hook-post-save-all 2>/dev/null)
     save_count=$(echo "$save_hook" | grep -o 'session-save\.sh' | wc -l | tr -d ' ')
     assert_contains "user hook preserved after double load" "echo user-hook" "$save_hook"
@@ -1499,134 +1166,10 @@ if [ -n "$TMUX" ]; then
         tmux set-option -gu @resurrect-hook-post-restore-all 2>/dev/null
     fi
 
-    bash "$PLUGIN_DIR/claude.tmux" 2>/dev/null
+    bash "$PLUGIN_DIR/agent-restore.tmux" 2>/dev/null
 else
     echo "  SKIP: not in tmux"
 fi
-
-# ============================================================
-echo ""
-echo "=== claude.tmux: tres auto-install ==="
-# ============================================================
-
-tmpdir=$(mktemp -d)
-tmpbin="$tmpdir/bin"
-tmux_home="$tmpdir/home"
-mkdir -p "$tmpbin" "$tmux_home/.config/fish/functions"
-
-cat > "$tmpbin/tmux" <<'EOF'
-#!/usr/bin/env bash
-case "$1" in
-    show-option)
-        case "$*" in
-            *"@tmux-claude-auto-install-wrapper"*) exit 1 ;;
-            *"@resurrect-dir"*) exit 1 ;;
-            *) exit 1 ;;
-        esac
-        ;;
-    show-environment)
-        exit 1
-        ;;
-    display-message)
-        printf '%s\n' "$*" >> "$TMUX_STUB_LOG"
-        exit 0
-        ;;
-    *)
-        exit 1
-        ;;
-esac
-EOF
-chmod +x "$tmpbin/tmux"
-
-old_path="$PATH"
-PATH="$tmpbin:$PATH"
-HOME="$tmux_home" TMUX_STUB_LOG="$tmpdir/tmux.log" bash "$PLUGIN_DIR/claude.tmux"
-rc=$?
-PATH="$old_path"
-
-assert_eq "claude.tmux auto-install exits 0" "0" "$rc"
-assert_eq "claude.tmux installs tres fish function" \
-    "present" \
-    "$([ -f "$tmux_home/.config/fish/functions/tres.fish" ] && echo present || echo absent)"
-assert_contains "installed tres contains function" \
-    "function tres" \
-    "$(cat "$tmux_home/.config/fish/functions/tres.fish" 2>/dev/null || true)"
-assert_eq "claude.tmux still installs session args helper" \
-    "present" \
-    "$([ -f "$tmux_home/.config/fish/functions/__tmux_claude_session_args.fish" ] && echo present || echo absent)"
-
-rm -rf "$tmpdir"
-
-tmpdir=$(mktemp -d)
-tmpbin="$tmpdir/bin"
-tmux_home="$tmpdir/home"
-mkdir -p "$tmpbin" "$tmux_home/.config/fish/functions"
-printf '%s\n' "function tres; echo user; end" > "$tmux_home/.config/fish/functions/tres.fish"
-
-cat > "$tmpbin/tmux" <<'EOF'
-#!/usr/bin/env bash
-case "$1" in
-    show-option) exit 1 ;;
-    show-environment) exit 1 ;;
-    display-message)
-        printf '%s\n' "$*" >> "$TMUX_STUB_LOG"
-        exit 0
-        ;;
-    *) exit 1 ;;
-esac
-EOF
-chmod +x "$tmpbin/tmux"
-
-old_path="$PATH"
-PATH="$tmpbin:$PATH"
-HOME="$tmux_home" TMUX_STUB_LOG="$tmpdir/tmux.log" bash "$PLUGIN_DIR/claude.tmux"
-rc=$?
-PATH="$old_path"
-
-installed_tres=$(cat "$tmux_home/.config/fish/functions/tres.fish")
-display_log=$(cat "$tmpdir/tmux.log" 2>/dev/null || true)
-assert_eq "claude.tmux existing tres exits 0" "0" "$rc"
-assert_eq "claude.tmux does not overwrite existing tres" \
-    "function tres; echo user; end" \
-    "$installed_tres"
-assert_contains "claude.tmux warns when existing tres is not plugin managed" \
-    "tmux-claude: tres.fish already exists" "$display_log"
-
-rm -rf "$tmpdir"
-
-tmpdir=$(mktemp -d)
-tmpbin="$tmpdir/bin"
-tmux_home="$tmpdir/home"
-mkdir -p "$tmpbin" "$tmux_home/.config/fish/functions"
-
-cat > "$tmpbin/tmux" <<'EOF'
-#!/usr/bin/env bash
-case "$1" in
-    show-option)
-        case "$*" in
-            *"@tmux-claude-auto-install-wrapper"*) printf '%s\n' off; exit 0 ;;
-            *"@resurrect-dir"*) exit 1 ;;
-            *) exit 1 ;;
-        esac
-        ;;
-    show-environment) exit 1 ;;
-    *) exit 1 ;;
-esac
-EOF
-chmod +x "$tmpbin/tmux"
-
-old_path="$PATH"
-PATH="$tmpbin:$PATH"
-HOME="$tmux_home" bash "$PLUGIN_DIR/claude.tmux"
-rc=$?
-PATH="$old_path"
-
-assert_eq "claude.tmux auto-install off exits 0" "0" "$rc"
-assert_eq "claude.tmux skips tres install when auto-install off" \
-    "absent" \
-    "$([ -f "$tmux_home/.config/fish/functions/tres.fish" ] && echo present || echo absent)"
-
-rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
@@ -1673,7 +1216,7 @@ echo "=== fish wrapper: window-name based naming ==="
 if command -v fish &>/dev/null; then
     # Single pane: should produce --name <window_name> (no suffix)
     result=$(fish -c "
-        source $PLUGIN_DIR/shell/__tmux_claude_session_args.fish
+        source $PLUGIN_DIR/shell/__tmux_agent_restore_session_args.fish
         set -gx TMUX '/tmp/test,1,0'
         set -gx TMUX_PANE '%0'
         function tmux
@@ -1683,13 +1226,13 @@ if command -v fish &>/dev/null; then
                 case '#{pane_index}'; echo 1
             end
         end
-        __tmux_claude_session_args
+        __tmux_agent_restore_session_args
     " 2>/dev/null | tr '\n' ' ' | sed 's/ $//')
     assert_eq "single pane: name without suffix" "--name hypothesis-testing" "$result"
 
     # Multi pane: should produce --name <window_name>.<pane>
     result=$(fish -c "
-        source $PLUGIN_DIR/shell/__tmux_claude_session_args.fish
+        source $PLUGIN_DIR/shell/__tmux_agent_restore_session_args.fish
         set -gx TMUX '/tmp/test,1,0'
         set -gx TMUX_PANE '%5'
         function tmux
@@ -1699,13 +1242,13 @@ if command -v fish &>/dev/null; then
                 case '#{pane_index}'; echo 2
             end
         end
-        __tmux_claude_session_args
+        __tmux_agent_restore_session_args
     " 2>/dev/null | tr '\n' ' ' | sed 's/ $//')
     assert_eq "multi pane: name with pane suffix" "--name my-editor.2" "$result"
 
     # Edge case: empty window_panes (graceful fallback)
     result=$(fish -c "
-        source $PLUGIN_DIR/shell/__tmux_claude_session_args.fish
+        source $PLUGIN_DIR/shell/__tmux_agent_restore_session_args.fish
         set -gx TMUX '/tmp/test,1,0'
         set -gx TMUX_PANE '%0'
         function tmux
@@ -1715,12 +1258,12 @@ if command -v fish &>/dev/null; then
                 case '#{pane_index}'; echo 1
             end
         end
-        __tmux_claude_session_args
+        __tmux_agent_restore_session_args
     " 2>/dev/null | tr '\n' ' ' | sed 's/ $//')
     assert_eq "empty pane_count: no suffix" "--name solo" "$result"
 
     result=$(fish -c "
-        source $PLUGIN_DIR/shell/__tmux_claude_session_args.fish
+        source $PLUGIN_DIR/shell/__tmux_agent_restore_session_args.fish
         set -gx TMUX '/tmp/test,1,0'
         set -gx TMUX_PANE '%0'
         function tmux
@@ -1730,186 +1273,12 @@ if command -v fish &>/dev/null; then
                 case '#{pane_index}'; echo 1
             end
         end
-        __tmux_claude_session_args
+        __tmux_agent_restore_session_args
     " 2>/dev/null | bracket_argv_lines)
     assert_eq "newline window name remains one sanitized argv word" "[--name]|[good---resume-evil]" "$result"
 else
     echo "  SKIP: fish not installed"
 fi
-
-# ============================================================
-echo ""
-echo "=== fish wrapper: fresh by default ==="
-# ============================================================
-
-if command -v fish &>/dev/null; then
-    tmpdir=$(mktemp -d)
-    project_dir="$tmpdir/.claude/projects/-repo"
-    mkdir -p "$project_dir"
-    echo '{"type":"custom-title","customTitle":"redbot"}' > "$project_dir/session-redbot.jsonl"
-
-    run_fresh_default_args() {
-        local extra="$1"
-        local env_auto_resume="$2"
-        HOME="$tmpdir" TMUX_CLAUDE_AUTO_RESUME="$env_auto_resume" fish -c "
-            source $PLUGIN_DIR/shell/__tmux_claude_find_session.fish
-            source $PLUGIN_DIR/shell/__tmux_claude_session_args.fish
-            function pwd; echo /repo; end
-            set -gx TMUX '/tmp/test,1,0'
-            set -gx TMUX_PANE '%0'
-            function tmux
-                switch \$argv[5]
-                    case '#{window_name}'; echo redbot
-                    case '#{window_panes}'; echo 1
-                    case '#{pane_index}'; echo 1
-                end
-            end
-            __tmux_claude_session_args $extra
-        " 2>/dev/null | tr '\n' ' ' | sed 's/ $//'
-    }
-
-    result=$(run_fresh_default_args "" "")
-    assert_eq "fresh default names without resume" "--name redbot" "$result"
-
-    result=$(run_fresh_default_args "" "1")
-    assert_eq "auto-resume env resumes matching title" "--resume session-redbot --name redbot" "$result"
-
-    result=$(run_fresh_default_args "--tmux-resume" "")
-    assert_eq "auto-resume flag resumes matching title" "--resume session-redbot --name redbot" "$result"
-    assert_not_contains "internal auto-resume flag is not forwarded" "--tmux-resume" "$result"
-
-    tmpbin="$tmpdir/bin"
-    mkdir -p "$tmpbin"
-    cat > "$tmpbin/claude" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$@"
-EOF
-    chmod +x "$tmpbin/claude"
-    wrapper_forwarded=$(PATH="$tmpbin:$PATH" fish -c "
-        set -gx PATH $tmpbin \$PATH
-        function __tmux_claude_session_args
-            echo --resume session-redbot
-            echo --name redbot
-        end
-        source $PLUGIN_DIR/shell/claude.fish
-        claude --tmux-resume --dangerously-skip-permissions
-    " 2>/dev/null | tr '\n' ' ' | sed 's/ $//')
-    assert_eq "claude wrapper filters internal resume flag before exec" \
-        "--resume session-redbot --name redbot --dangerously-skip-permissions" \
-        "$wrapper_forwarded"
-
-    unset -f run_fresh_default_args
-    rm -rf "$tmpdir"
-else
-    echo "  SKIP: fish not installed"
-fi
-
-tmpdir=$(mktemp -d)
-tmpbin="$tmpdir/bin"
-tmux_home="$tmpdir/home"
-repo_dir="$tmpdir/repo"
-mkdir -p "$tmpbin" "$tmux_home" "$repo_dir"
-project_dir="$tmux_home/.claude/projects/$(printf '%s' "$repo_dir" | tr '/.' '--')"
-mkdir -p "$project_dir"
-echo '{"type":"custom-title","customTitle":"redbot"}' > "$project_dir/session-redbot.jsonl"
-
-cat > "$tmpbin/claude" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$@"
-EOF
-chmod +x "$tmpbin/claude"
-
-cat > "$tmpbin/tmux" <<'EOF'
-#!/usr/bin/env bash
-case "$5" in
-    '#{window_name}') printf '%s\n' redbot ;;
-    '#{window_panes}') printf '%s\n' 1 ;;
-    '#{pane_index}') printf '%s\n' 1 ;;
-    *) exit 1 ;;
-esac
-EOF
-chmod +x "$tmpbin/tmux"
-
-run_bash_wrapper_args() {
-    local extra="$1"
-    (
-        cd "$repo_dir" || exit 1
-        HOME="$tmux_home" \
-        PATH="$tmpbin:$PATH" \
-        TMUX="/tmp/test,1,0" \
-        TMUX_PANE="%0" \
-        TMUX_CLAUDE_PLUGIN_DIR="$PLUGIN_DIR" \
-        bash -c "source \"\$TMUX_CLAUDE_PLUGIN_DIR/shell/claude.bash\"; claude $extra"
-    ) 2>/dev/null | bracket_argv_lines
-}
-
-result=$(run_bash_wrapper_args "")
-assert_eq "bash wrapper fresh default names without resume" "[--name]|[redbot]" "$result"
-
-result=$(run_bash_wrapper_args "--tmux-resume")
-assert_eq "bash wrapper opt-in resume finds matching title" "[--resume]|[session-redbot]|[--name]|[redbot]" "$result"
-assert_not_contains "bash wrapper strips internal resume flag" "--tmux-resume" "$result"
-
-checkout_dir="$tmpdir/non-default-checkout"
-mkdir -p "$checkout_dir/shell" "$checkout_dir/scripts"
-cp "$PLUGIN_DIR/shell/claude.bash" "$checkout_dir/shell/claude.bash"
-cp "$PLUGIN_DIR/shell/claude.zsh" "$checkout_dir/shell/claude.zsh"
-cp "$PLUGIN_DIR/scripts/claude-session-args.sh" "$checkout_dir/scripts/claude-session-args.sh"
-cp "$PLUGIN_DIR/scripts/claude-find-session.py" "$checkout_dir/scripts/claude-find-session.py"
-chmod +x "$checkout_dir/scripts/claude-session-args.sh" "$checkout_dir/scripts/claude-find-session.py"
-
-result=$(
-    (
-        cd "$repo_dir" || exit 1
-        HOME="$tmux_home" \
-        PATH="$tmpbin:$PATH" \
-        TMUX="/tmp/test,1,0" \
-        TMUX_PANE="%0" \
-        bash -c "source \"$checkout_dir/shell/claude.bash\"; claude"
-    ) 2>/dev/null | bracket_argv_lines
-)
-assert_eq "bash wrapper finds helper relative to sourced checkout" "[--name]|[redbot]" "$result"
-
-if command -v zsh &>/dev/null; then
-    run_zsh_wrapper_args() {
-        local extra="$1"
-        (
-            cd "$repo_dir" || exit 1
-            HOME="$tmux_home" \
-            PATH="$tmpbin:$PATH" \
-            TMUX="/tmp/test,1,0" \
-            TMUX_PANE="%0" \
-            TMUX_CLAUDE_PLUGIN_DIR="$PLUGIN_DIR" \
-            zsh -c "source \"\$TMUX_CLAUDE_PLUGIN_DIR/shell/claude.zsh\"; claude $extra"
-        ) 2>/dev/null | bracket_argv_lines
-    }
-
-    result=$(run_zsh_wrapper_args "")
-    assert_eq "zsh wrapper fresh default names without resume" "[--name]|[redbot]" "$result"
-
-    result=$(run_zsh_wrapper_args "--tmux-resume")
-    assert_eq "zsh wrapper opt-in resume finds matching title" "[--resume]|[session-redbot]|[--name]|[redbot]" "$result"
-    assert_not_contains "zsh wrapper strips internal resume flag" "--tmux-resume" "$result"
-
-    result=$(
-        (
-            cd "$repo_dir" || exit 1
-            HOME="$tmux_home" \
-            PATH="$tmpbin:$PATH" \
-            TMUX="/tmp/test,1,0" \
-            TMUX_PANE="%0" \
-            zsh -c "source \"$checkout_dir/shell/claude.zsh\"; claude"
-        ) 2>/dev/null | bracket_argv_lines
-    )
-    assert_eq "zsh wrapper finds helper relative to sourced checkout" "[--name]|[redbot]" "$result"
-
-    unset -f run_zsh_wrapper_args
-else
-    echo "  SKIP: zsh not installed"
-fi
-
-unset -f run_bash_wrapper_args
-rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
@@ -2090,7 +1459,7 @@ echo "=== lib/snapshot: write_header ==="
 header=$(snapshot_write_header)
 
 assert_contains "header includes version marker v2" \
-    "# tmux-claude snapshot v2" \
+    "# tmux-agent-restore snapshot v2" \
     "$header"
 
 assert_contains "header lists all 8 field names" \
@@ -2171,22 +1540,17 @@ assert_eq "empty file → version 0" \
     "0" \
     "$(snapshot_detect_version "$tmpdir/empty.txt")"
 
-printf '# tmux-claude snapshot v2\n# fields: target\n0:1.1\tcodex\n' > "$tmpdir/v2.txt"
+printf '# tmux-agent-restore snapshot v2\n# fields: target\n0:1.1\tcodex\n' > "$tmpdir/v2.txt"
 assert_eq "v2 header → version 2" \
     "2" \
     "$(snapshot_detect_version "$tmpdir/v2.txt")"
 
-printf '0:1.1|codex|abc|/cwd|fine-tuning\n' > "$tmpdir/v1.txt"
-assert_eq "pipe-delimited no-header → version 1" \
-    "1" \
-    "$(snapshot_detect_version "$tmpdir/v1.txt")"
+printf '0:1.1|codex|abc|/cwd|fine-tuning\n' > "$tmpdir/pipe.txt"
+assert_eq "old pipe-delimited format → unrecognized (-1)" \
+    "-1" \
+    "$(snapshot_detect_version "$tmpdir/pipe.txt")"
 
-printf '# Claude/Codex session mapping — Sat\n# Format: a|b\n0:1.1|codex|abc|/cwd|x\n' > "$tmpdir/v1-commented.txt"
-assert_eq "pipe rows after comments → version 1" \
-    "1" \
-    "$(snapshot_detect_version "$tmpdir/v1-commented.txt")"
-
-printf '# tmux-claude snapshot v9\n' > "$tmpdir/v9.txt"
+printf '# tmux-agent-restore snapshot v9\n' > "$tmpdir/v9.txt"
 assert_eq "v9 header → version 9 (caller decides what to do)" \
     "9" \
     "$(snapshot_detect_version "$tmpdir/v9.txt")"
@@ -2210,73 +1574,7 @@ assert_eq "comments plus whitespace-only lines → version 0" \
     "0" \
     "$(snapshot_detect_version "$tmpdir/comments-whitespace-only.txt")"
 
-printf '  \n\t\n0:1.1|codex|abc|/cwd|x\n' > "$tmpdir/v1-after-whitespace.txt"
-assert_eq "whitespace-only lines before pipe row → version 1" \
-    "1" \
-    "$(snapshot_detect_version "$tmpdir/v1-after-whitespace.txt")"
-
 rm -rf "$tmpdir"
-
-# ============================================================
-echo ""
-echo "=== lib/snapshot: promote_v1_row ==="
-# ============================================================
-
-assert_eq "claude+UUID → uuid kind" \
-    "0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf uuid" \
-    "$(promote_v1_row claude 0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf)"
-
-assert_eq "claude+picker → picker kind" \
-    "picker picker" \
-    "$(promote_v1_row claude picker)"
-
-assert_eq "claude+nonsense → none kind, sid=-" \
-    "- none" \
-    "$(promote_v1_row claude not-a-uuid)"
-
-assert_eq "codex+UUID → uuid kind" \
-    "019dd3be-9166-7750-8039-a1f9ecdad1f3 uuid" \
-    "$(promote_v1_row codex 019dd3be-9166-7750-8039-a1f9ecdad1f3)"
-
-assert_eq "codex+picker → picker kind" \
-    "picker picker" \
-    "$(promote_v1_row codex picker)"
-
-assert_eq "nvim+picker → none kind (sid discarded — historical sentinel)" \
-    "- none" \
-    "$(promote_v1_row nvim picker)"
-
-assert_eq "nvim+empty → none kind" \
-    "- none" \
-    "$(promote_v1_row nvim '')"
-
-assert_eq "just+dev → recipe kind, sid preserved" \
-    "dev recipe" \
-    "$(promote_v1_row just dev)"
-
-assert_eq "just+empty → none kind" \
-    "- none" \
-    "$(promote_v1_row just '')"
-
-assert_eq "just+spaced-recipe → recipe kind, sid preserved" \
-    "dev server recipe" \
-    "$(promote_v1_row just "dev server")"
-
-assert_eq "just+complex-recipe-name → recipe kind" \
-    "test:unit recipe" \
-    "$(promote_v1_row just test:unit)"
-
-assert_eq "unknown tool → none kind" \
-    "- none" \
-    "$(promote_v1_row xargs foo)"
-
-assert_eq "claude+UPPERCASE UUID → normalized lowercase, uuid kind" \
-    "0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf uuid" \
-    "$(promote_v1_row claude 0CBB1761-1A50-4CC4-8E7D-7B4BBDC788BF)"
-
-assert_eq "claude+mixed-case UUID → normalized lowercase" \
-    "0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf uuid" \
-    "$(promote_v1_row claude 0cbb1761-1A50-4cc4-8E7D-7b4bbdc788bf)"
 
 # ============================================================
 echo ""
@@ -2321,7 +1619,7 @@ assert_eq "collapsed row flags" \
 
 # Comment lines are NOT in the output.
 assert_not_contains "output excludes header comment" \
-    "# tmux-claude snapshot" \
+    "# tmux-agent-restore snapshot" \
     "$rows"
 
 assert_not_contains "output excludes field-name comment" \
@@ -2440,109 +1738,13 @@ assert_eq "consumer pattern: flags correctly empty" "" "$flags"
 
 # ============================================================
 echo ""
-echo "=== lib/snapshot: read v1 legacy fallback ==="
-# ============================================================
-
-tmpdir=$(mktemp -d)
-stdout="$tmpdir/stdout.txt"
-stderr="$tmpdir/stderr.txt"
-snapshot_read "$PLUGIN_DIR/tests/fixtures/v1-snapshot.txt" >"$stdout" 2>"$stderr"
-read_status=$?
-rows=$(cat "$stdout")
-logs=$(cat "$stderr")
-
-assert_eq "snapshot_read v1 fixture exits 0" \
-    "0" \
-    "$read_status"
-
-assert_eq "v1 fixture promotes 5 rows" \
-    "5" \
-    "$(printf '%s\n' "$rows" | wc -l | tr -d ' ')"
-
-while IFS= read -r row_line; do
-    nf=$(printf '%s' "$row_line" | awk -F'\t' '{print NF}')
-    assert_eq "v1 promoted row has exactly 8 fields" "8" "$nf"
-done < "$stdout"
-
-codex_row=$(printf '%s\n' "$rows" | sed -n '1p')
-assert_eq "v1 codex UUID sid preserved" \
-    "019dd3be-9166-7750-8039-a1f9ecdad1f3" \
-    "$(printf '%s' "$codex_row" | cut -f3)"
-assert_eq "v1 codex UUID sid_kind uuid" \
-    "uuid" \
-    "$(printf '%s' "$codex_row" | cut -f4)"
-
-nvim_row=$(printf '%s\n' "$rows" | sed -n '2p')
-assert_eq "v1 nvim picker sid discarded" \
-    "-" \
-    "$(printf '%s' "$nvim_row" | cut -f3)"
-assert_eq "v1 nvim picker sid_kind none" \
-    "none" \
-    "$(printf '%s' "$nvim_row" | cut -f4)"
-
-claude_invalid_row=$(printf '%s\n' "$rows" | sed -n '3p')
-assert_eq "v1 claude non-uuid sid discarded" \
-    "-" \
-    "$(printf '%s' "$claude_invalid_row" | cut -f3)"
-assert_eq "v1 claude non-uuid sid_kind none" \
-    "none" \
-    "$(printf '%s' "$claude_invalid_row" | cut -f4)"
-
-just_row=$(printf '%s\n' "$rows" | sed -n '5p')
-assert_eq "v1 just recipe preserved" \
-    "dev" \
-    "$(printf '%s' "$just_row" | cut -f3)"
-assert_eq "v1 just recipe sid_kind recipe" \
-    "recipe" \
-    "$(printf '%s' "$just_row" | cut -f4)"
-
-while IFS= read -r row_line; do
-    assert_eq "v1 promoted row original_cwd empty" \
-        "" \
-        "$(printf '%s' "$row_line" | cut -f6)"
-    assert_eq "v1 promoted row flags empty" \
-        "" \
-        "$(printf '%s' "$row_line" | cut -f8)"
-done < "$stdout"
-
-assert_contains "v1 read logs LEGACY warning" \
-    "LEGACY v1 snapshot read" \
-    "$logs"
-assert_contains "v1 read log mentions row count" \
-    "5 rows" \
-    "$logs"
-
-rm -rf "$tmpdir"
-
-# ============================================================
-echo ""
-echo "=== lib/snapshot: read v1 spaced just recipe ==="
-# ============================================================
-
-tmpdir=$(mktemp -d)
-cat > "$tmpdir/v1-spaced-just.txt" <<'EOF'
-0:19.1|just|dev server|/cwd|win
-EOF
-
-spaced_row=$(snapshot_read "$tmpdir/v1-spaced-just.txt" 2>/dev/null)
-assert_eq "v1 spaced just recipe preserves full sid" \
-    "dev server" \
-    "$(printf '%s' "$spaced_row" | cut -f3)"
-assert_eq "v1 spaced just recipe kind" \
-    "recipe" \
-    "$(printf '%s' "$spaced_row" | cut -f4)"
-
-rm -rf "$tmpdir"
-
-# ============================================================
-echo ""
 echo "=== lib/snapshot: read v2 whitespace-only lines ==="
 # ============================================================
 
 tmpdir=$(mktemp -d)
 stdout="$tmpdir/stdout.txt"
 stderr="$tmpdir/stderr.txt"
-printf '# tmux-claude snapshot v2\n# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n  \n0:1.1\tcodex\tabc\tuuid\t/cwd\t\twin\t\n' > "$tmpdir/v2-whitespace.txt"
+printf '# tmux-agent-restore snapshot v2\n# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n  \n0:1.1\tcodex\tabc\tuuid\t/cwd\t\twin\t\n' > "$tmpdir/v2-whitespace.txt"
 
 snapshot_read "$tmpdir/v2-whitespace.txt" >"$stdout" 2>"$stderr"
 rows=$(cat "$stdout")
@@ -2565,7 +1767,7 @@ echo "=== lib/snapshot: read error paths ==="
 tmpdir=$(mktemp -d)
 
 # --- Unknown future version (v9) ---
-printf '# tmux-claude snapshot v9\nignored\n' > "$tmpdir/v9.txt"
+printf '# tmux-agent-restore snapshot v9\nignored\n' > "$tmpdir/v9.txt"
 
 out=$(snapshot_read "$tmpdir/v9.txt" 2>"$tmpdir/v9.err"); rc=$?
 err=$(cat "$tmpdir/v9.err")
@@ -2588,7 +1790,7 @@ assert_contains "unrecognized stderr says 'refusing to parse'" \
 
 # --- Malformed v2 row (7 fields, not 8) ---
 {
-    printf '# tmux-claude snapshot v2\n'
+    printf '# tmux-agent-restore snapshot v2\n'
     printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
     printf '0:1.1\tcodex\tabc\tuuid\t/cwd\t\tfine-tuning\n'        # 7 fields — short!
     printf '0:2.1\tclaude\tdef\tuuid\t/cwd\t\twin\t\n'            # 8 fields — ok
@@ -2606,44 +1808,6 @@ assert_contains "malformed v2 logs WARN" "WARN" "$err"
 assert_contains "malformed v2 stderr says 'malformed v2 row'" \
     "malformed v2 row" "$err"
 
-# --- Malformed v1 row (3 pipes, not 4) ---
-{
-    printf '0:1.1|codex|abc|/cwd|fine-tuning\n'                    # 5 fields ok
-    printf '0:2.1|claude|missing-fields\n'                         # 3 fields — short!
-} > "$tmpdir/malformed-v1.txt"
-
-out=$(snapshot_read "$tmpdir/malformed-v1.txt" 2>"$tmpdir/mv1.err")
-err=$(cat "$tmpdir/mv1.err")
-row_count=$(printf '%s\n' "$out" | grep -c $'^[^\t]' || true)
-
-assert_eq "malformed v1: 1 good row promoted, 1 short row skipped" \
-    "1" "$row_count"
-assert_contains "malformed v1 survivor is target 0:1.1" \
-    $'0:1.1\tcodex' "$out"
-assert_contains "malformed v1 survivor sid kind is none" \
-    $'\t-\tnone\t' "$out"
-assert_contains "malformed v1 logs WARN" "WARN" "$err"
-assert_contains "malformed v1 stderr says 'malformed v1 row'" \
-    "malformed v1 row" "$err"
-
-# --- Malformed v1 row (6 pipes — extra | in cwd) ---
-{
-    printf '0:3.1|codex|def|/cwd/with|pipe|win\n'                  # 6 fields — extra!
-    printf '0:4.1|claude|ghi|/clean|win\n'                         # 5 fields ok
-} > "$tmpdir/malformed-v1-extra.txt"
-
-out=$(snapshot_read "$tmpdir/malformed-v1-extra.txt" 2>"$tmpdir/mv1e.err")
-err=$(cat "$tmpdir/mv1e.err")
-row_count=$(printf '%s\n' "$out" | grep -c $'^[^\t]' || true)
-
-assert_eq "v1 with extra pipe: extra-field row skipped, clean row promoted" \
-    "1" "$row_count"
-assert_contains "extra-pipe survivor is target 0:4.1" \
-    $'0:4.1\tclaude' "$out"
-assert_not_contains "extra-pipe malformed target is skipped" \
-    "0:3.1" "$out"
-assert_contains "extra-pipe row logs WARN" "WARN" "$err"
-
 rm -rf "$tmpdir"
 
 # ============================================================
@@ -2653,7 +1817,7 @@ echo "=== lib/snapshot: read v2 drops extra future columns ==="
 
 tmpdir=$(mktemp -d)
 {
-    printf '# tmux-claude snapshot v2\n'
+    printf '# tmux-agent-restore snapshot v2\n'
     printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\textra_future_col\n'
     printf '0:1.1\tcodex\tabc\tuuid\t/cwd\t\twname\t\tfuture_value_dropped\n'
 } > "$tmpdir/v2plus.txt"
@@ -2683,7 +1847,7 @@ assert_eq "flags field intact (empty)" "" "$(printf '%s' "$row" | cut -f8)"
 
 # Row with MANY extra columns also gets truncated.
 {
-    printf '# tmux-claude snapshot v2\n'
+    printf '# tmux-agent-restore snapshot v2\n'
     printf '0:2.1\tclaude\txyz\tuuid\t/c\t\twin\tflag\tA\tB\tC\tD\n'
 } > "$tmpdir/v2-many-extras.txt"
 
@@ -2715,7 +1879,6 @@ elif [ ! -s "$HOME/.config/tmux/resurrect/claude-panes.txt" ]; then
 else
     real_snapshot="$HOME/.config/tmux/resurrect/claude-panes.txt"
     tmpdir=$(mktemp -d)
-    snapshot_version=$(snapshot_detect_version "$real_snapshot")
     rows=$(snapshot_read "$real_snapshot" 2>"$tmpdir/smoke.err"); rc=$?
     err=$(cat "$tmpdir/smoke.err")
 
@@ -2733,20 +1896,10 @@ else
         fi
 
         unexpected_logs=$(printf '%s\n' "$err" | grep -E 'WARN|ERROR' || true)
-        if [ "$snapshot_version" = "1" ]; then
-            unexpected_logs=$(printf '%s\n' "$unexpected_logs" \
-                              | grep -vF 'LEGACY v1 snapshot read' || true)
-        fi
         if [ -n "$unexpected_logs" ]; then
             red "  FAIL: snapshot_read logged unexpected WARN/ERROR for live snapshot"
             red "    stderr: $err"
             fail=$((fail + 1))
-        fi
-
-        # LEGACY warning expected for v1 input (current live format).
-        if [ "$snapshot_version" = "1" ]; then
-            assert_contains "LEGACY warning logged for v1 input" \
-                "LEGACY" "$err"
         fi
 
         if [ "$row_count" -eq 0 ]; then
@@ -3532,7 +2685,7 @@ assert_eq "quote_word empty word is quoted empty string" \
     "''" \
     "$(shell_quote_word sh "")"
 
-danger_dir="${TMPDIR:-/tmp}/tmux-claude-quote-danger"
+danger_dir="${TMPDIR:-/tmp}/tmux-agent-restore-quote-danger"
 rm -rf "$danger_dir"
 danger_word="x'; mkdir -p '$danger_dir'; echo '"
 quoted=$(shell_quote_word sh "$danger_word")
@@ -3588,7 +2741,7 @@ assert_eq "quote_argv empty argv fails" \
     "1" \
     "$(shell_quote_argv sh "" >/dev/null; echo $?)"
 
-quote_file_tmp=$(mktemp "${TMPDIR:-/tmp}/tmux-claude-argv-file.XXXXXX")
+quote_file_tmp=$(mktemp "${TMPDIR:-/tmp}/tmux-agent-restore-argv-file.XXXXXX")
 printf 'cmd\n\n' > "$quote_file_tmp"
 assert_eq "quote_argv_file preserves final empty word" \
     "'cmd' ''" \
@@ -3773,7 +2926,16 @@ tmux() {
             if [ "${MOCK_CAPTURE_AFTER_SEND:-}" = "continuation" ] && \
                 [ -f "$MOCK_TMUX_LOG" ] && \
                 grep -qF "send-keys -t %1 printf '" "$MOCK_TMUX_LOG"; then
-                printf 'CONT> printf %%s\\\\n %s\n' "${TMUX_CLAUDE_READY_MARKER:-}"
+                printf 'CONT> printf %%s\\\\n %s\n' "${TMUX_AGENT_RESTORE_READY_MARKER:-}"
+                return 0
+            fi
+            if [ "${MOCK_CAPTURE_AFTER_SEND:-}" = "slow" ] && \
+                [ -f "$MOCK_TMUX_LOG" ] && \
+                grep -qF "send-keys -t %1 printf '" "$MOCK_TMUX_LOG"; then
+                printf 'x\n' >> "$MOCK_TMUX_LOG.polls"
+                if [ "$(wc -l < "$MOCK_TMUX_LOG.polls")" -gt 25 ]; then
+                    printf '%s\n' "__tcready_forced__"
+                fi
                 return 0
             fi
             printf '%s\n' "$MOCK_CAPTURE"
@@ -3842,14 +3004,14 @@ assert_eq "restore_sid_valid accepts none sentinel" \
     "$(restore_sid_valid "-" none; echo $?)"
 
 MOCK_PANE_COMMAND=claude
-assert_eq "wait_for_prompt returns nonzero for non-shell foreground" \
-    "1" \
+assert_eq "wait_for_prompt returns 2 for non-shell foreground" \
+    "2" \
     "$(wait_for_prompt "%1"; echo $?)"
 
 MOCK_PANE_COMMAND=fish
 MOCK_CAPTURE=""
 MOCK_CAPTURE_AFTER_SEND=1
-TMUX_CLAUDE_READY_MARKER="__tcready_forced__"
+TMUX_AGENT_RESTORE_READY_MARKER="__tcready_forced__"
 assert_eq "wait_for_prompt succeeds when marker appears" \
     "0" \
     "$(wait_for_prompt "%1"; echo $?)"
@@ -3860,73 +3022,83 @@ assert_not_contains "wait_for_prompt probe does not type literal marker" \
     "__tcready_forced__" \
     "$(cat "$MOCK_TMUX_LOG")"
 
-unset TMUX_CLAUDE_READY_MARKER
+# A shell that is slow to start (tmux server boot) answers after more polls than the old
+# fixed 20-attempt budget allowed; observed 2026-11-12, pane not ready after 10s.
+MOCK_CAPTURE_AFTER_SEND=slow
+TMUX_AGENT_RESTORE_PROMPT_SLEEP=0
+assert_eq "wait_for_prompt keeps waiting for a slow shell" \
+    "0" \
+    "$(wait_for_prompt "%1"; echo $?)"
+unset TMUX_AGENT_RESTORE_PROMPT_SLEEP
+rm -f "$MOCK_TMUX_LOG.polls"
+
+unset TMUX_AGENT_RESTORE_READY_MARKER
 unset MOCK_CAPTURE_AFTER_SEND
 
 MOCK_CAPTURE="old __tcready_stale__"
-TMUX_CLAUDE_READY_MARKER="__tcready_fresh__"
-TMUX_CLAUDE_PROMPT_ATTEMPTS=1
-TMUX_CLAUDE_PROMPT_SLEEP=0
+TMUX_AGENT_RESTORE_READY_MARKER="__tcready_fresh__"
+TMUX_AGENT_RESTORE_PROMPT_TIMEOUT=0
+TMUX_AGENT_RESTORE_PROMPT_SLEEP=0
 assert_eq "wait_for_prompt ignores stale marker with different fresh marker" \
     "1" \
     "$(wait_for_prompt "%1"; echo $?)"
-unset TMUX_CLAUDE_READY_MARKER
-unset TMUX_CLAUDE_PROMPT_ATTEMPTS
-unset TMUX_CLAUDE_PROMPT_SLEEP
+unset TMUX_AGENT_RESTORE_READY_MARKER
+unset TMUX_AGENT_RESTORE_PROMPT_TIMEOUT
+unset TMUX_AGENT_RESTORE_PROMPT_SLEEP
 
 MOCK_PANE_COMMAND=fish
 MOCK_CAPTURE="old __tcready_same__"
-TMUX_CLAUDE_READY_MARKER="__tcready_same__"
-TMUX_CLAUDE_PROMPT_ATTEMPTS=1
-TMUX_CLAUDE_PROMPT_SLEEP=0
+TMUX_AGENT_RESTORE_READY_MARKER="__tcready_same__"
+TMUX_AGENT_RESTORE_PROMPT_TIMEOUT=0
+TMUX_AGENT_RESTORE_PROMPT_SLEEP=0
 assert_eq "wait_for_prompt rejects same-marker stale scrollback" \
     "1" \
     "$(wait_for_prompt "%1"; echo $?)"
-unset TMUX_CLAUDE_READY_MARKER
-unset TMUX_CLAUDE_PROMPT_ATTEMPTS
-unset TMUX_CLAUDE_PROMPT_SLEEP
+unset TMUX_AGENT_RESTORE_READY_MARKER
+unset TMUX_AGENT_RESTORE_PROMPT_TIMEOUT
+unset TMUX_AGENT_RESTORE_PROMPT_SLEEP
 
 rm -f "$MOCK_TMUX_LOG"
 MOCK_CAPTURE=""
 MOCK_CAPTURE_AFTER_SEND=wrapped
-TMUX_CLAUDE_READY_MARKER="__tcready_wrapped__"
-TMUX_CLAUDE_PROMPT_ATTEMPTS=1
-TMUX_CLAUDE_PROMPT_SLEEP=0
+TMUX_AGENT_RESTORE_READY_MARKER="__tcready_wrapped__"
+TMUX_AGENT_RESTORE_PROMPT_TIMEOUT=0
+TMUX_AGENT_RESTORE_PROMPT_SLEEP=0
 assert_eq "wait_for_prompt succeeds when marker wraps visually" \
     "0" \
     "$(wait_for_prompt "%1"; echo $?)"
 unset MOCK_CAPTURE_AFTER_SEND
-unset TMUX_CLAUDE_READY_MARKER
-unset TMUX_CLAUDE_PROMPT_ATTEMPTS
-unset TMUX_CLAUDE_PROMPT_SLEEP
+unset TMUX_AGENT_RESTORE_READY_MARKER
+unset TMUX_AGENT_RESTORE_PROMPT_TIMEOUT
+unset TMUX_AGENT_RESTORE_PROMPT_SLEEP
 
 MOCK_CAPTURE=""
 MOCK_CAPTURE_AFTER_SEND=continuation
-TMUX_CLAUDE_READY_MARKER="__tcready_cont__"
-TMUX_CLAUDE_PROMPT_ATTEMPTS=1
-TMUX_CLAUDE_PROMPT_SLEEP=0
+TMUX_AGENT_RESTORE_READY_MARKER="__tcready_cont__"
+TMUX_AGENT_RESTORE_PROMPT_TIMEOUT=0
+TMUX_AGENT_RESTORE_PROMPT_SLEEP=0
 assert_eq "wait_for_prompt rejects continuation prompt echoed marker" \
     "1" \
     "$(wait_for_prompt "%1"; echo $?)"
 unset MOCK_CAPTURE_AFTER_SEND
-unset TMUX_CLAUDE_READY_MARKER
-unset TMUX_CLAUDE_PROMPT_ATTEMPTS
-unset TMUX_CLAUDE_PROMPT_SLEEP
+unset TMUX_AGENT_RESTORE_READY_MARKER
+unset TMUX_AGENT_RESTORE_PROMPT_TIMEOUT
+unset TMUX_AGENT_RESTORE_PROMPT_SLEEP
 
 rm -f "$MOCK_TMUX_LOG"
 MOCK_CAPTURE=""
-TMUX_CLAUDE_READY_MARKER="bad;touch"
-TMUX_CLAUDE_PROMPT_ATTEMPTS=1
-TMUX_CLAUDE_PROMPT_SLEEP=0
+TMUX_AGENT_RESTORE_READY_MARKER="bad;touch"
+TMUX_AGENT_RESTORE_PROMPT_TIMEOUT=0
+TMUX_AGENT_RESTORE_PROMPT_SLEEP=0
 assert_eq "wait_for_prompt rejects unsafe marker override" \
     "1" \
     "$(wait_for_prompt "%1"; echo $?)"
 assert_eq "wait_for_prompt does not send unsafe marker override" \
     "absent" \
     "$([ -f "$MOCK_TMUX_LOG" ] && echo present || echo absent)"
-unset TMUX_CLAUDE_READY_MARKER
-unset TMUX_CLAUDE_PROMPT_ATTEMPTS
-unset TMUX_CLAUDE_PROMPT_SLEEP
+unset TMUX_AGENT_RESTORE_READY_MARKER
+unset TMUX_AGENT_RESTORE_PROMPT_TIMEOUT
+unset TMUX_AGENT_RESTORE_PROMPT_SLEEP
 
 unset -f tmux
 rm -rf "$tmpdir"
@@ -4018,19 +3190,20 @@ echo "=== session-restore: dry-run adapter dispatch ==="
 tmpdir=$(mktemp -d)
 tmpbin="$tmpdir/bin"
 resurrect_dir="$tmpdir/resurrect"
-pwned="${TMPDIR:-/tmp}/tmux-claude-restore-pwned"
+pwned="${TMPDIR:-/tmp}/tmux-agent-restore-restore-pwned"
 mkdir -p "$tmpbin" "$resurrect_dir"
 rm -f "$pwned"
 
 cat > "$resurrect_dir/claude-panes.txt" <<'EOF'
-# Claude/Codex session mapping — v1 fixture for Chunk 3 restore
-0:1.1|claude|0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf|/repo/claude|fine tuning
-0:2.1|codex|019dd3be-9166-7750-8039-a1f9ecdad1f3|/repo/codex|codex-win
-0:3.1|claude|picker|/repo/picker|picker-win
-0:4.1|nvim|picker|/repo/edit|editor
-0:5.1|just|dev|/repo/app|server
+# tmux-agent-restore snapshot v2
+# fields: target	tool	sid	sid_kind	cwd	original_cwd	wname	flags
+0:1.1	claude	0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf	uuid	/repo/claude		fine tuning	-
+0:2.1	codex	019dd3be-9166-7750-8039-a1f9ecdad1f3	uuid	/repo/codex		codex-win	-
+0:3.1	claude	picker	picker	/repo/picker		picker-win	-
+0:4.1	nvim	-	none	/repo/edit		editor	-
+0:5.1	just	dev	recipe	/repo/app		server	-
 EOF
-printf "0:6.1|claude|0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf|/repo/evil'; touch '%s'; echo '|bad;name\n" "$pwned" >> "$resurrect_dir/claude-panes.txt"
+printf "0:6.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/evil'; touch '%s'; echo '\t\tbad;name\t-\n" "$pwned" >> "$resurrect_dir/claude-panes.txt"
 
 cat > "$tmpbin/tmux" <<EOF
 #!/usr/bin/env bash
@@ -4096,7 +3269,7 @@ chmod +x "$tmpbin/tmux"
 
 ORIG_PATH="$PATH"
 PATH="$tmpbin:$PATH"
-out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+out=$(TMUX_AGENT_RESTORE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
 rc=$?
 PATH="$ORIG_PATH"
 
@@ -4204,7 +3377,7 @@ resurrect_dir="$tmpdir/resurrect"
 send_keys_log="$tmpdir/send-keys.log"
 mkdir -p "$tmpbin" "$resurrect_dir/.claude-restore.lock"
 {
-    printf '# tmux-claude snapshot v2\n'
+    printf '# tmux-agent-restore snapshot v2\n'
     printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
     printf '0:1.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/locked\t\tlocked\t\n'
 } > "$resurrect_dir/claude-panes.txt"
@@ -4212,7 +3385,7 @@ write_restore_tmux_stub "$tmpbin/tmux" "$resurrect_dir" "$send_keys_log"
 
 ORIG_PATH="$PATH"
 PATH="$tmpbin:$PATH"
-out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh")
+out=$(TMUX_AGENT_RESTORE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh")
 rc=$?
 PATH="$ORIG_PATH"
 restore_log_content=$(cat "$resurrect_dir/restore.log" 2>/dev/null || true)
@@ -4234,7 +3407,7 @@ send_keys_log="$tmpdir/send-keys.log"
 mkdir -p "$tmpbin" "$resurrect_dir/.claude-restore.lock"
 printf '%s\n' 999999 > "$resurrect_dir/.claude-restore.lock/pid"
 {
-    printf '# tmux-claude snapshot v2\n'
+    printf '# tmux-agent-restore snapshot v2\n'
     printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
     printf '0:1.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/stale-lock\t\tstale-lock\t\n'
 } > "$resurrect_dir/claude-panes.txt"
@@ -4242,7 +3415,7 @@ write_restore_tmux_stub "$tmpbin/tmux" "$resurrect_dir" "$send_keys_log"
 
 ORIG_PATH="$PATH"
 PATH="$tmpbin:$PATH"
-out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+out=$(TMUX_AGENT_RESTORE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
 rc=$?
 PATH="$ORIG_PATH"
 restore_log_content=$(cat "$resurrect_dir/restore.log" 2>/dev/null || true)
@@ -4264,7 +3437,7 @@ resurrect_dir="$tmpdir/resurrect"
 send_keys_log="$tmpdir/send-keys.log"
 mkdir -p "$tmpbin" "$resurrect_dir"
 {
-    printf '# tmux-claude snapshot v9\n'
+    printf '# tmux-agent-restore snapshot v9\n'
     printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
     printf '0:9.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/v9\t\tv9-win\t\n'
 } > "$resurrect_dir/claude-panes.txt"
@@ -4272,7 +3445,7 @@ write_restore_tmux_stub "$tmpbin/tmux" "$resurrect_dir" "$send_keys_log"
 
 ORIG_PATH="$PATH"
 PATH="$tmpbin:$PATH"
-out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+out=$(TMUX_AGENT_RESTORE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
 rc=$?
 PATH="$ORIG_PATH"
 restore_log_content=$(cat "$resurrect_dir/restore.log" 2>/dev/null || true)
@@ -4296,7 +3469,7 @@ resurrect_dir="$tmpdir/resurrect"
 send_keys_log="$tmpdir/send-keys.log"
 mkdir -p "$tmpbin" "$resurrect_dir"
 {
-    printf '# tmux-claude snapshot v2\n'
+    printf '# tmux-agent-restore snapshot v2\n'
     printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
     printf '0:7.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/v2\t\tv2 win\t\n'
 } > "$resurrect_dir/claude-panes.txt"
@@ -4304,7 +3477,7 @@ write_restore_tmux_stub "$tmpbin/tmux" "$resurrect_dir" "$send_keys_log"
 
 ORIG_PATH="$PATH"
 PATH="$tmpbin:$PATH"
-out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+out=$(TMUX_AGENT_RESTORE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
 rc=$?
 PATH="$ORIG_PATH"
 
@@ -4324,7 +3497,7 @@ resurrect_dir="$tmpdir/resurrect"
 send_keys_log="$tmpdir/send-keys.log"
 mkdir -p "$tmpbin" "$resurrect_dir"
 {
-    printf '# tmux-claude snapshot v2\n'
+    printf '# tmux-agent-restore snapshot v2\n'
     printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
     printf '0:7.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf%%0A--dangerously-skip-permissions\tuuid\t/repo/v2\t\twin\t\n'
 } > "$resurrect_dir/claude-panes.txt"
@@ -4332,7 +3505,7 @@ write_restore_tmux_stub "$tmpbin/tmux" "$resurrect_dir" "$send_keys_log"
 
 ORIG_PATH="$PATH"
 PATH="$tmpbin:$PATH"
-out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+out=$(TMUX_AGENT_RESTORE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
 rc=$?
 PATH="$ORIG_PATH"
 restore_log_content=$(cat "$resurrect_dir/restore.log" 2>/dev/null || true)
@@ -4353,7 +3526,7 @@ resurrect_dir="$tmpdir/resurrect"
 send_keys_log="$tmpdir/send-keys.log"
 mkdir -p "$tmpbin" "$resurrect_dir"
 {
-    printf '# tmux-claude snapshot v2\n'
+    printf '# tmux-agent-restore snapshot v2\n'
     printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
     printf '0:7.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/v2\t\tgood%%0A--resume%%0Aevil\t\n'
 } > "$resurrect_dir/claude-panes.txt"
@@ -4361,7 +3534,7 @@ write_restore_tmux_stub "$tmpbin/tmux" "$resurrect_dir" "$send_keys_log"
 
 ORIG_PATH="$PATH"
 PATH="$tmpbin:$PATH"
-out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+out=$(TMUX_AGENT_RESTORE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
 rc=$?
 PATH="$ORIG_PATH"
 
@@ -4381,7 +3554,7 @@ resurrect_dir="$tmpdir/resurrect"
 send_keys_log="$tmpdir/send-keys.log"
 mkdir -p "$tmpbin" "$resurrect_dir"
 {
-    printf '# tmux-claude snapshot v2\n'
+    printf '# tmux-agent-restore snapshot v2\n'
     printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
     printf '0:8.1\tjust\t-\tnone\t/repo/bad\t\tbad-just\t\n'
     printf '0:9.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/good\t\tgood claude\t\n'
@@ -4390,7 +3563,7 @@ write_restore_tmux_stub "$tmpbin/tmux" "$resurrect_dir" "$send_keys_log"
 
 ORIG_PATH="$PATH"
 PATH="$tmpbin:$PATH"
-out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+out=$(TMUX_AGENT_RESTORE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
 rc=$?
 PATH="$ORIG_PATH"
 restore_log_content=$(cat "$resurrect_dir/restore.log" 2>/dev/null || true)
@@ -4522,7 +3695,7 @@ tmpbin="$tmpdir/bin"
 resurrect_dir="$tmpdir/resurrect"
 mkdir -p "$tmpbin" "$resurrect_dir"
 {
-    printf '# tmux-claude snapshot v2\n'
+    printf '# tmux-agent-restore snapshot v2\n'
     printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
     printf '0:3.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/reminders\t\treminders\t\n'
 } > "$resurrect_dir/claude-panes.txt"
@@ -4534,7 +3707,7 @@ write_restore_window_tmux_stub "$tmpbin/tmux" "$resurrect_dir"
 
 ORIG_PATH="$PATH"
 PATH="$tmpbin:$PATH"
-out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+out=$(TMUX_AGENT_RESTORE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
 rc=$?
 PATH="$ORIG_PATH"
 
@@ -4551,7 +3724,7 @@ tmpbin="$tmpdir/bin"
 resurrect_dir="$tmpdir/resurrect"
 mkdir -p "$tmpbin" "$resurrect_dir"
 {
-    printf '# tmux-claude snapshot v2\n'
+    printf '# tmux-agent-restore snapshot v2\n'
     printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
     printf '0:3.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/reminders\t\treminders\t\n'
 } > "$resurrect_dir/claude-panes.txt"
@@ -4563,7 +3736,7 @@ write_restore_uninspectable_target_tmux_stub "$tmpbin/tmux" "$resurrect_dir"
 
 ORIG_PATH="$PATH"
 PATH="$tmpbin:$PATH"
-out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+out=$(TMUX_AGENT_RESTORE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
 rc=$?
 PATH="$ORIG_PATH"
 
@@ -4580,7 +3753,7 @@ tmpbin="$tmpdir/bin"
 resurrect_dir="$tmpdir/resurrect"
 mkdir -p "$tmpbin" "$resurrect_dir"
 {
-    printf '# tmux-claude snapshot v2\n'
+    printf '# tmux-agent-restore snapshot v2\n'
     printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
     printf '0:3.--help\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/reminders\t\treminders\t\n'
 } > "$resurrect_dir/claude-panes.txt"
@@ -4589,7 +3762,7 @@ write_restore_uninspectable_target_tmux_stub "$tmpbin/tmux" "$resurrect_dir"
 
 ORIG_PATH="$PATH"
 PATH="$tmpbin:$PATH"
-out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run 2>"$tmpdir/restore.err")
+out=$(TMUX_AGENT_RESTORE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run 2>"$tmpdir/restore.err")
 rc=$?
 PATH="$ORIG_PATH"
 err=$(cat "$tmpdir/restore.err")
@@ -4610,7 +3783,7 @@ tmpbin="$tmpdir/bin"
 resurrect_dir="$tmpdir/resurrect"
 mkdir -p "$tmpbin" "$resurrect_dir"
 {
-    printf '# tmux-claude snapshot v2\n'
+    printf '# tmux-agent-restore snapshot v2\n'
     printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
     printf '0:3.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/empty-name\t\t\t\n'
 } > "$resurrect_dir/claude-panes.txt"
@@ -4619,7 +3792,7 @@ write_restore_window_tmux_stub "$tmpbin/tmux" "$resurrect_dir"
 
 ORIG_PATH="$PATH"
 PATH="$tmpbin:$PATH"
-out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+out=$(TMUX_AGENT_RESTORE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
 rc=$?
 PATH="$ORIG_PATH"
 
@@ -4634,7 +3807,7 @@ tmpbin="$tmpdir/bin"
 resurrect_dir="$tmpdir/resurrect"
 mkdir -p "$tmpbin" "$resurrect_dir"
 {
-    printf '# tmux-claude snapshot v2\n'
+    printf '# tmux-agent-restore snapshot v2\n'
     printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
     printf '0:99.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/missing-empty-name\t\t\t\n'
 } > "$resurrect_dir/claude-panes.txt"
@@ -4643,7 +3816,7 @@ write_restore_uninspectable_target_tmux_stub "$tmpbin/tmux" "$resurrect_dir"
 
 ORIG_PATH="$PATH"
 PATH="$tmpbin:$PATH"
-out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+out=$(TMUX_AGENT_RESTORE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
 rc=$?
 PATH="$ORIG_PATH"
 restore_log_content=$(cat "$resurrect_dir/restore.log" 2>/dev/null || true)
@@ -4663,7 +3836,7 @@ tmpbin="$tmpdir/bin"
 resurrect_dir="$tmpdir/resurrect"
 mkdir -p "$tmpbin" "$resurrect_dir"
 {
-    printf '# tmux-claude snapshot v2\n'
+    printf '# tmux-agent-restore snapshot v2\n'
     printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
     printf '0:3.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/reminders\t\treminders\t\n'
 } > "$resurrect_dir/claude-panes.txt"
@@ -4672,7 +3845,7 @@ write_restore_uninspectable_target_tmux_stub "$tmpbin/tmux" "$resurrect_dir"
 
 ORIG_PATH="$PATH"
 PATH="$tmpbin:$PATH"
-out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+out=$(TMUX_AGENT_RESTORE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
 rc=$?
 PATH="$ORIG_PATH"
 restore_log_content=$(cat "$resurrect_dir/restore.log" 2>/dev/null || true)
@@ -4690,7 +3863,7 @@ tmpbin="$tmpdir/bin"
 resurrect_dir="$tmpdir/resurrect"
 mkdir -p "$tmpbin" "$resurrect_dir"
 {
-    printf '# tmux-claude snapshot v2\n'
+    printf '# tmux-agent-restore snapshot v2\n'
     printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
     printf '0:3.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/reminders\t\treminders\t\n'
 } > "$resurrect_dir/claude-panes.txt"
@@ -4699,7 +3872,7 @@ write_restore_window_tmux_stub "$tmpbin/tmux" "$resurrect_dir"
 
 ORIG_PATH="$PATH"
 PATH="$tmpbin:$PATH"
-out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+out=$(TMUX_AGENT_RESTORE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
 rc=$?
 PATH="$ORIG_PATH"
 restore_log_content=$(cat "$resurrect_dir/restore.log" 2>/dev/null || true)
@@ -4717,7 +3890,7 @@ tmpbin="$tmpdir/bin"
 resurrect_dir="$tmpdir/resurrect"
 mkdir -p "$tmpbin" "$resurrect_dir"
 {
-    printf '# tmux-claude snapshot v2\n'
+    printf '# tmux-agent-restore snapshot v2\n'
     printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
     printf '0:3.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/reminders\t\treminders\t\n'
 } > "$resurrect_dir/claude-panes.txt"
@@ -4730,7 +3903,7 @@ write_restore_window_tmux_stub "$tmpbin/tmux" "$resurrect_dir"
 
 ORIG_PATH="$PATH"
 PATH="$tmpbin:$PATH"
-out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+out=$(TMUX_AGENT_RESTORE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
 rc=$?
 PATH="$ORIG_PATH"
 restore_log_content=$(cat "$resurrect_dir/restore.log" 2>/dev/null || true)
@@ -4755,7 +3928,7 @@ resurrect_dir="$tmpdir/resurrect"
 mkdir -p "$tmpbin" "$resurrect_dir"
 
 cat > "$resurrect_dir/claude-panes.txt" <<'EOF'
-# tmux-claude snapshot v2
+# tmux-agent-restore snapshot v2
 # fields: target	tool	sid	sid_kind	cwd	original_cwd	wname	flags
 0:1.1	claude	-	none	/repo/bad		bad-pane	sid_invalid
 0:2.1	codex	019dd3be-9166-7750-8039-a1f9ecdad1f3	uuid	/repo	/repo/pruned	codex-win	cwd_collapsed
@@ -4825,7 +3998,7 @@ chmod +x "$tmpbin/tmux"
 
 ORIG_PATH="$PATH"
 PATH="$tmpbin:$PATH"
-out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+out=$(TMUX_AGENT_RESTORE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
 rc=$?
 PATH="$ORIG_PATH"
 log_content=$(cat "$resurrect_dir/restore.log")
@@ -4849,7 +4022,7 @@ resurrect_dir="$tmpdir/resurrect"
 mkdir -p "$tmpbin" "$resurrect_dir"
 
 cat > "$resurrect_dir/claude-panes.txt" <<'EOF'
-# tmux-claude snapshot v2
+# tmux-agent-restore snapshot v2
 # fields: target	tool	sid	sid_kind	cwd	original_cwd	wname	flags
 0:2.1	codex	019dd3be-9166-7750-8039-a1f9ecdad1f3	uuid	/repo%0AOK forged	/repo/pruned%0AWARN forged	codex-win	cwd_collapsed
 EOF
@@ -4918,7 +4091,7 @@ chmod +x "$tmpbin/tmux"
 
 ORIG_PATH="$PATH"
 PATH="$tmpbin:$PATH"
-out=$(TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
+out=$(TMUX_AGENT_RESTORE_RESTORE_BOOT_DELAY=0 bash "$PLUGIN_DIR/scripts/session-restore.sh" --dry-run)
 rc=$?
 PATH="$ORIG_PATH"
 log_content=$(cat "$resurrect_dir/restore.log")
@@ -4950,7 +4123,7 @@ resurrect_dir="$tmpdir/resurrect"
 mkdir -p "$tmpbin" "$resurrect_dir"
 
 cat > "$resurrect_dir/claude-panes.txt" <<'EOF'
-# tmux-claude snapshot v2
+# tmux-agent-restore snapshot v2
 # fields: target	tool	sid	sid_kind	cwd	original_cwd	wname	flags
 0:1.1	claude	0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf	uuid	/repo/one		one	-
 0:2.1	codex	019dd3be-9166-7750-8039-a1f9ecdad1f3	uuid	/repo/two		two	-
@@ -5031,10 +4204,10 @@ chmod +x "$tmpbin/tmux"
 
 ORIG_PATH="$PATH"
 PATH="$tmpbin:$PATH"
-TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 \
-TMUX_CLAUDE_READY_MARKER="__tcready_forced__" \
-TMUX_CLAUDE_PROMPT_ATTEMPTS=1 \
-TMUX_CLAUDE_PROMPT_SLEEP=0 \
+TMUX_AGENT_RESTORE_RESTORE_BOOT_DELAY=0 \
+TMUX_AGENT_RESTORE_READY_MARKER="__tcready_forced__" \
+TMUX_AGENT_RESTORE_PROMPT_TIMEOUT=0 \
+TMUX_AGENT_RESTORE_PROMPT_SLEEP=0 \
 bash "$PLUGIN_DIR/scripts/session-restore.sh"
 rc=$?
 PATH="$ORIG_PATH"
@@ -5042,8 +4215,8 @@ PATH="$ORIG_PATH"
 send_log=$(cat "$tmpdir/send-keys.log")
 restore_log_content=$(cat "$resurrect_dir/restore.log")
 assert_eq "restore live exits 0 despite one busy pane" "0" "$rc"
-assert_contains "restore live logs prompt wait skip for busy pane" \
-    "SKIP 0:1.1 claude prompt_wait_timeout" "$restore_log_content"
+assert_contains "restore live logs busy pane skip" \
+    "SKIP 0:1.1 claude pane_busy" "$restore_log_content"
 assert_contains "restore live waits with encoded marker before sending restore command" \
     "printf '" "$send_log"
 assert_not_contains "restore live wait probe does not type literal marker" \
@@ -5064,525 +4237,6 @@ assert_contains "restore live continues after skipped pane" \
     "OK 0:2.1 codex 019dd3be-9166-7750-8039-a1f9ecdad1f3" "$restore_log_content"
 
 rm -rf "$tmpdir"
-
-# ============================================================
-echo ""
-echo "=== shell/tres.fish: restored session discovery ==="
-# ============================================================
-
-tmpdir=$(mktemp -d)
-tmpbin="$tmpdir/bin"
-tmphome="$tmpdir/home"
-mkdir -p "$tmpbin" "$tmphome/.config/tmux/resurrect"
-
-cat > "$tmpbin/tmux" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$TMUX_STUB_LOG"
-case "$1" in
-    show-option)
-        exit 1
-        ;;
-    has-session)
-        if [ "${TMUX_HAS_SESSION:-0}" = "1" ]; then
-            exit 0
-        fi
-        exit 1
-        ;;
-    new-session)
-        exit 0
-        ;;
-    list-windows)
-        target=""
-        while [ "$#" -gt 0 ]; do
-            if [ "$1" = "-t" ]; then
-                shift
-                target="${1:-}"
-                break
-            fi
-            shift
-        done
-        case "$target" in
-            work) printf '%s\n' "1: fine-tuning" "2: seo" ;;
-            0) printf '%s\n' "1: fallback" "2: other" ;;
-            *) exit 1 ;;
-        esac
-        ;;
-    kill-session)
-        exit 0
-        ;;
-    attach)
-        exit 0
-        ;;
-    *)
-        exit 1
-        ;;
-esac
-EOF
-chmod +x "$tmpbin/tmux"
-cat > "$tmpbin/sleep" <<'EOF'
-#!/usr/bin/env bash
-exit 0
-EOF
-chmod +x "$tmpbin/sleep"
-
-cat > "$tmphome/.config/tmux/resurrect/last" <<'EOF'
-pane	work	1	0	:	1	editor	:/repo	1	fish	:
-window	work	1	:fine-tuning	0	:	layout	off
-EOF
-
-old_path="$PATH"
-PATH="$tmpbin:$PATH"
-TMUX_STUB_LOG="$tmpdir/tmux.log" \
-HOME="$tmphome" \
-XDG_CONFIG_HOME="$tmphome/.config" \
-TMUX_HAS_SESSION=0 \
-fish -c 'source "$argv[1]"; tres' "$PLUGIN_DIR/shell/tres.fish"
-rc=$?
-PATH="$old_path"
-
-log=$(cat "$tmpdir/tmux.log")
-assert_eq "tres exits 0 with discovered session" "0" "$rc"
-assert_contains "tres creates bootstrap when no tmux server exists" \
-    "new-session -d -s _tres_bootstrap" "$log"
-assert_contains "tres waits on discovered session work" \
-    "list-windows -t work" "$log"
-assert_contains "tres kills bootstrap session" \
-    "kill-session -t _tres_bootstrap" "$log"
-assert_contains "tres attaches to discovered session work" \
-    "attach -t work" "$log"
-assert_not_contains "tres does not attach to hardcoded zero when snapshot has work" \
-    "attach -t 0" "$log"
-
-rm -rf "$tmpdir"
-
-tmpdir=$(mktemp -d)
-tmpbin="$tmpdir/bin"
-tmphome="$tmpdir/home"
-mkdir -p "$tmpbin" "$tmphome/.config/tmux/resurrect"
-
-cat > "$tmpbin/tmux" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$TMUX_STUB_LOG"
-case "$1" in
-    show-option) exit 1 ;;
-    has-session) exit 0 ;;
-    list-windows)
-        target=""
-        while [ "$#" -gt 0 ]; do
-            if [ "$1" = "-t" ]; then
-                shift
-                target="${1:-}"
-                break
-            fi
-            shift
-        done
-        [ "$target" = "0" ] || exit 1
-        printf '%s\n' "1: fallback" "2: restored"
-        ;;
-    kill-session) exit 0 ;;
-    attach) exit 0 ;;
-    *) exit 1 ;;
-esac
-EOF
-chmod +x "$tmpbin/tmux"
-cat > "$tmpbin/sleep" <<'EOF'
-#!/usr/bin/env bash
-exit 0
-EOF
-chmod +x "$tmpbin/sleep"
-
-old_path="$PATH"
-PATH="$tmpbin:$PATH"
-TMUX_STUB_LOG="$tmpdir/tmux.log" HOME="$tmphome" XDG_CONFIG_HOME="$tmphome/.config" fish -c 'source "$argv[1]"; tres' "$PLUGIN_DIR/shell/tres.fish"
-rc=$?
-PATH="$old_path"
-
-log=$(cat "$tmpdir/tmux.log")
-assert_eq "tres exits 0 without snapshot" "0" "$rc"
-assert_contains "tres defaults to session zero without snapshot" "attach -t 0" "$log"
-assert_not_contains "tres does not create bootstrap when tmux server exists" "new-session -d -s _tres_bootstrap" "$log"
-
-rm -rf "$tmpdir"
-
-tmpdir=$(mktemp -d)
-tmpbin="$tmpdir/bin"
-tmphome="$tmpdir/home"
-custom_resurrect="$tmpdir/custom-resurrect"
-mkdir -p "$tmpbin" "$tmphome/.config/tmux/resurrect" "$custom_resurrect"
-
-cat > "$tmpbin/tmux" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$TMUX_STUB_LOG"
-case "$1" in
-    show-option)
-        case "$*" in
-            *"@resurrect-dir"*) printf '%s\n' "$CUSTOM_RESURRECT_DIR"; exit 0 ;;
-            *) exit 1 ;;
-        esac
-        ;;
-    has-session) exit 0 ;;
-    list-windows)
-        target=""
-        while [ "$#" -gt 0 ]; do
-            if [ "$1" = "-t" ]; then
-                shift
-                target="${1:-}"
-                break
-            fi
-            shift
-        done
-        [ "$target" = "work" ] || exit 1
-        printf '%s\n' "1: fine-tuning" "2: seo"
-        ;;
-    kill-session) exit 0 ;;
-    attach) exit 0 ;;
-    *) exit 1 ;;
-esac
-EOF
-chmod +x "$tmpbin/tmux"
-cat > "$tmpbin/sleep" <<'EOF'
-#!/usr/bin/env bash
-exit 0
-EOF
-chmod +x "$tmpbin/sleep"
-
-cat > "$custom_resurrect/last" <<'EOF'
-pane	work	1	0	:	1	editor	:/repo	1	fish	:
-EOF
-
-old_path="$PATH"
-PATH="$tmpbin:$PATH"
-TMUX_STUB_LOG="$tmpdir/tmux.log" \
-HOME="$tmphome" \
-XDG_CONFIG_HOME="$tmphome/.config" \
-CUSTOM_RESURRECT_DIR="$custom_resurrect" \
-fish -c 'source "$argv[1]"; tres' "$PLUGIN_DIR/shell/tres.fish"
-rc=$?
-PATH="$old_path"
-
-log=$(cat "$tmpdir/tmux.log")
-assert_eq "tres exits 0 with custom resurrect dir" "0" "$rc"
-assert_contains "tres reads target from custom resurrect dir" "attach -t work" "$log"
-assert_not_contains "tres does not fall back when custom resurrect snapshot exists" "attach -t 0" "$log"
-
-rm -rf "$tmpdir"
-
-tmpdir=$(mktemp -d)
-tmpbin="$tmpdir/bin"
-tmphome="$tmpdir/home"
-custom_resurrect="$tmpdir/custom-resurrect"
-server_started="$tmpdir/server-started"
-mkdir -p "$tmpbin" "$tmphome/.config/tmux/resurrect" "$custom_resurrect"
-
-cat > "$tmpbin/tmux" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$TMUX_STUB_LOG"
-case "$1" in
-    show-option)
-        if [ -f "$TMUX_SERVER_STARTED" ]; then
-            case "$*" in
-                *"@resurrect-dir"*) printf '%s\n' "$CUSTOM_RESURRECT_DIR"; exit 0 ;;
-            esac
-        fi
-        exit 1
-        ;;
-    has-session)
-        [ -f "$TMUX_SERVER_STARTED" ] && exit 0
-        exit 1
-        ;;
-    new-session)
-        touch "$TMUX_SERVER_STARTED"
-        exit 0
-        ;;
-    list-windows)
-        target=""
-        while [ "$#" -gt 0 ]; do
-            if [ "$1" = "-t" ]; then
-                shift
-                target="${1:-}"
-                break
-            fi
-            shift
-        done
-        [ "$target" = "work" ] || exit 1
-        printf '%s\n' "1: fine-tuning" "2: seo"
-        ;;
-    kill-session) exit 0 ;;
-    attach) exit 0 ;;
-    *) exit 1 ;;
-esac
-EOF
-chmod +x "$tmpbin/tmux"
-cat > "$tmpbin/sleep" <<'EOF'
-#!/usr/bin/env bash
-exit 0
-EOF
-chmod +x "$tmpbin/sleep"
-
-cat > "$custom_resurrect/last" <<'EOF'
-pane	work	1	0	:	1	editor	:/repo	1	fish	:
-EOF
-
-old_path="$PATH"
-PATH="$tmpbin:$PATH"
-TMUX_STUB_LOG="$tmpdir/tmux.log" \
-HOME="$tmphome" \
-XDG_CONFIG_HOME="$tmphome/.config" \
-CUSTOM_RESURRECT_DIR="$custom_resurrect" \
-TMUX_SERVER_STARTED="$server_started" \
-fish -c 'source "$argv[1]"; tres' "$PLUGIN_DIR/shell/tres.fish"
-rc=$?
-PATH="$old_path"
-
-log=$(cat "$tmpdir/tmux.log")
-assert_eq "tres exits 0 with custom resurrect dir after bootstrap" "0" "$rc"
-assert_contains "tres creates bootstrap before reading custom resurrect dir" \
-    "new-session -d -s _tres_bootstrap" "$log"
-assert_contains "tres attaches to custom resurrect session after bootstrap" "attach -t work" "$log"
-assert_not_contains "tres does not fall back after bootstrap reveals custom resurrect dir" "attach -t 0" "$log"
-
-rm -rf "$tmpdir"
-
-tmpdir=$(mktemp -d)
-tmpbin="$tmpdir/bin"
-tmphome="$tmpdir/home"
-mkdir -p "$tmpbin" "$tmphome/.config/tmux/resurrect"
-
-cat > "$tmpbin/tmux" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$TMUX_STUB_LOG"
-case "$1" in
-    show-option) exit 1 ;;
-    has-session) exit 0 ;;
-    list-windows)
-        target=""
-        while [ "$#" -gt 0 ]; do
-            if [ "$1" = "-t" ]; then
-                shift
-                target="${1:-}"
-                break
-            fi
-            shift
-        done
-        [ "$target" = "work" ] || exit 1
-        printf '%s\n' "1: fine-tuning"
-        ;;
-    attach) exit 0 ;;
-    *) exit 1 ;;
-esac
-EOF
-chmod +x "$tmpbin/tmux"
-cat > "$tmpbin/sleep" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$SLEEP_STUB_LOG"
-exit 0
-EOF
-chmod +x "$tmpbin/sleep"
-
-cat > "$tmphome/.config/tmux/resurrect/last" <<'EOF'
-pane	work	1	0	:	1	editor	:/repo	1	fish	:
-EOF
-
-old_path="$PATH"
-PATH="$tmpbin:$PATH"
-TMUX_STUB_LOG="$tmpdir/tmux.log" \
-SLEEP_STUB_LOG="$tmpdir/sleep.log" \
-HOME="$tmphome" \
-XDG_CONFIG_HOME="$tmphome/.config" \
-fish -c 'source "$argv[1]"; tres' "$PLUGIN_DIR/shell/tres.fish"
-rc=$?
-PATH="$old_path"
-
-sleep_count=$(wc -l < "$tmpdir/sleep.log" | tr -d ' ')
-assert_eq "tres exits 0 with one-window restored session" "0" "$rc"
-assert_eq "tres does not wait full timeout for one-window session" "2" "$sleep_count"
-
-rm -rf "$tmpdir"
-
-if command -v fish >/dev/null 2>&1; then
-    fish -n "$PLUGIN_DIR/shell/tres.fish"
-    assert_eq "tres fish syntax is valid" "0" "$?"
-else
-    echo "  WARN: fish not installed; skipping tres syntax check"
-fi
-
-# ============================================================
-echo ""
-echo "=== session-audit: live pane report ==="
-# ============================================================
-
-tmpdir=$(mktemp -d)
-tmpbin="$tmpdir/bin"
-tmphome="$tmpdir/home"
-mkdir -p "$tmpbin" "$tmphome/.codex/sessions"
-
-audit_sid="019ea610-ef51-7b51-8a40-6c2b946b6450"
-touch "$tmphome/.codex/sessions/rollout-test-${audit_sid}.jsonl"
-
-cat > "$tmpbin/tmux" <<EOF
-#!/usr/bin/env bash
-case "\$1" in
-    list-sessions)
-        printf '%s\n' 0
-        ;;
-    list-windows)
-        printf '%s\n' 1
-        ;;
-    list-panes)
-        printf '%s\n' 1
-        ;;
-    display-message)
-        case "\$*" in
-            *"#{window_name}"*) printf '%s\n' audit ;;
-            *"#{pane_current_command}"*) printf '%s\n' codex-aarch64-a ;;
-            *"#{pane_current_path}"*) printf '%s\n' /repo ;;
-            *"#{pane_pid}"*) printf '%s\n' 100 ;;
-            *) exit 1 ;;
-        esac
-        ;;
-    show-options)
-        option=""
-        while [ "\$#" -gt 0 ]; do
-            if [ "\$1" = "-v" ]; then
-                shift
-                option="\${1:-}"
-                break
-            fi
-            shift
-        done
-        case "\$option" in
-            @codex_session_id) printf '%s\n' "$audit_sid" ;;
-            @codex_session_pid) printf '%s\n' 999 ;;
-            @codex_cwd) printf '%s\n' /repo ;;
-            *) exit 1 ;;
-        esac
-        ;;
-    *)
-        exit 1
-        ;;
-esac
-EOF
-chmod +x "$tmpbin/tmux"
-
-cat > "$tmpbin/ps" <<'EOF'
-#!/usr/bin/env bash
-if [ "$1" = "-axww" ] && [ "$2" = "-o" ] && [ "$3" = "pid=,ppid=,command=" ]; then
-    printf '%s\n' "100 1 fish" "200 100 codex --yolo -s workspace-write resume"
-elif [ "$1" = "-p" ] && [ "$3" = "-o" ] && [ "$4" = "command=" ]; then
-    printf '%s\n' "codex --yolo -s workspace-write resume"
-else
-    exit 1
-fi
-EOF
-chmod +x "$tmpbin/ps"
-
-old_path="$PATH"
-PATH="$tmpbin:$PATH"
-audit_output=$(HOME="$tmphome" bash "$PLUGIN_DIR/scripts/session-audit.sh" 2>&1)
-audit_rc=$?
-PATH="$old_path"
-
-assert_eq "audit exits 0 for UUID-restorable pane" "0" "$audit_rc"
-assert_contains "audit reports target" "0:1.1" "$audit_output"
-assert_contains "audit reports codex tool" "codex" "$audit_output"
-assert_contains "audit reports codex uuid" "$audit_sid" "$audit_output"
-assert_contains "audit reports pid mismatch trusted" "pid_mismatch_trusted" "$audit_output"
-
-rm -rf "$tmpdir"
-
-tmpdir=$(mktemp -d)
-tmpbin="$tmpdir/bin"
-tmphome="$tmpdir/home"
-mkdir -p "$tmpbin" "$tmphome"
-
-bad_audit_sid="not-a-uuid"
-
-cat > "$tmpbin/tmux" <<EOF
-#!/usr/bin/env bash
-case "\$1" in
-    list-sessions)
-        printf '%s\n' 0
-        ;;
-    list-windows)
-        printf '%s\n' 1
-        ;;
-    list-panes)
-        printf '%s\n' 1
-        ;;
-    display-message)
-        case "\$*" in
-            *"#{window_name}"*) printf '%s\n' audit ;;
-            *"#{pane_current_command}"*) printf '%s\n' codex-aarch64-a ;;
-            *"#{pane_current_path}"*) printf '%s\n' /repo ;;
-            *"#{pane_pid}"*) printf '%s\n' 100 ;;
-            *) exit 1 ;;
-        esac
-        ;;
-    show-options)
-        option=""
-        while [ "\$#" -gt 0 ]; do
-            if [ "\$1" = "-v" ]; then
-                shift
-                option="\${1:-}"
-                break
-            fi
-            shift
-        done
-        case "\$option" in
-            @codex_session_id) printf '%s\n' "$bad_audit_sid" ;;
-            @codex_session_pid) printf '%s\n' 200 ;;
-            @codex_cwd) printf '%s\n' /repo ;;
-            *) exit 1 ;;
-        esac
-        ;;
-    *)
-        exit 1
-        ;;
-esac
-EOF
-chmod +x "$tmpbin/tmux"
-
-cat > "$tmpbin/ps" <<'EOF'
-#!/usr/bin/env bash
-if [ "$1" = "-axww" ] && [ "$2" = "-o" ] && [ "$3" = "pid=,ppid=,command=" ]; then
-    printf '%s\n' "100 1 fish" "200 100 codex-aarch64-a exec"
-elif [ "$1" = "-p" ] && [ "$3" = "-o" ] && [ "$4" = "command=" ]; then
-    printf '%s\n' "codex-aarch64-a exec"
-else
-    exit 1
-fi
-EOF
-chmod +x "$tmpbin/ps"
-
-old_path="$PATH"
-PATH="$tmpbin:$PATH"
-audit_output=$(HOME="$tmphome" bash "$PLUGIN_DIR/scripts/session-audit.sh" 2>&1)
-audit_rc=$?
-PATH="$old_path"
-
-assert_eq "audit exits nonzero for invalid UUID" "1" "$audit_rc"
-assert_contains "audit reports original invalid sid" "$bad_audit_sid" "$audit_output"
-assert_contains "audit reports invalid sid flag" "sid_invalid" "$audit_output"
-
-rm -rf "$tmpdir"
-
-# ============================================================
-echo ""
-echo "=== README: tres and v2 snapshot docs ==="
-# ============================================================
-
-readme_content=$(cat "$PLUGIN_DIR/README.md")
-assert_contains "README documents tres helper" "tres" "$readme_content"
-assert_contains "README documents v2 snapshot format" "snapshot v2" "$readme_content"
-assert_contains "README documents restore.log observability" "restore.log" "$readme_content"
-assert_contains "README documents configured resurrect dir mapping location" "configured `@resurrect-dir`" "$readme_content"
-assert_contains "README documents save/restore fallback mapping location" "~/.tmux/resurrect" "$readme_content"
-assert_contains "README documents session audit command" "session-audit.sh" "$readme_content"
-assert_contains "README documents fresh Claude default" "creates a fresh session" "$readme_content"
-assert_contains "README documents explicit tmux resume opt-in" "--tmux-resume" "$readme_content"
-assert_contains "README documents stale pid trust flag" "pid_mismatch_trusted" "$readme_content"
-assert_contains "README documents restore lock" "restore_already_running" "$readme_content"
-assert_contains "README documents audit nonzero behavior" "exits non-zero" "$readme_content"
 
 # ============================================================
 echo ""

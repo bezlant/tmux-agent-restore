@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tmux-claude: Post-restore hook for tmux-resurrect.
+# tmux-agent-restore: Post-restore hook for tmux-resurrect.
 
 set -euo pipefail
 
@@ -83,8 +83,8 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-snapshot_tmp=$(mktemp "${TMPDIR:-/tmp}/tmux-claude-snapshot.XXXXXX")
-argv_tmp=$(mktemp "${TMPDIR:-/tmp}/tmux-claude-argv.XXXXXX")
+snapshot_tmp=$(mktemp "${TMPDIR:-/tmp}/tmux-agent-restore-snapshot.XXXXXX")
+argv_tmp=$(mktemp "${TMPDIR:-/tmp}/tmux-agent-restore-argv.XXXXXX")
 
 ok=0
 warn=0
@@ -96,7 +96,7 @@ restore_log BEGIN "pane_map=$PANE_MAP dry_run=$DRY_RUN"
 
 adapters_load "$CURRENT_DIR"
 
-boot_delay="${TMUX_CLAUDE_RESTORE_BOOT_DELAY:-1}"
+boot_delay="${TMUX_AGENT_RESTORE_RESTORE_BOOT_DELAY:-1}"
 if [ "$boot_delay" != "0" ]; then
     sleep "$boot_delay"
 fi
@@ -221,9 +221,15 @@ while IFS= read -r row || [ -n "$row" ]; do
         continue
     fi
 
-    if ! wait_for_prompt "$target"; then
+    wait_rc=0
+    wait_for_prompt "$target" || wait_rc=$?
+    if [ "$wait_rc" -ne 0 ]; then
         skip=$((skip + 1))
-        restore_log SKIP "$log_target $log_tool prompt_wait_timeout"
+        if [ "$wait_rc" -eq 2 ]; then
+            restore_log SKIP "$log_target $log_tool pane_busy"
+        else
+            restore_log SKIP "$log_target $log_tool prompt_wait_timeout"
+        fi
         continue
     fi
 

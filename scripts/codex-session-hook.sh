@@ -7,7 +7,7 @@ set -euo pipefail
 [ -n "${TMUX:-}" ] || exit 0
 [ -n "${TMUX_PANE:-}" ] || exit 0
 
-PLUGIN_DIR="${TMUX_CLAUDE_PLUGIN_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+PLUGIN_DIR="${TMUX_AGENT_RESTORE_PLUGIN_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
 # shellcheck source=../lib/process.sh
 [ -f "$PLUGIN_DIR/lib/process.sh" ] && . "$PLUGIN_DIR/lib/process.sh"
