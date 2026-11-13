@@ -17,60 +17,6 @@ bracket_argv_lines() {
 }
 
 # ============================================================
-echo "=== session-restore: 5-field format parsing ==="
-# ============================================================
-
-tmpdir=$(mktemp -d)
-cat > "$tmpdir/claude-panes.txt" <<'EOF'
-# Claude/Codex session mapping — test
-# Format: session:window.pane|tool|session_id|cwd|window_name
-0:1.1|claude|aaaaaaaa-1111-2222-3333-444444444444|/Users/test/project|my-window
-0:2.1|codex|bbbbbbbb-5555-6666-7777-888888888888|/Users/test/other|codex-win
-0:3.1|claude|picker|/Users/test/project|picker-win
-0:4.1|codex|picker|/Users/test/project|codex-picker
-0:5.1|nvim|picker|/Users/test/project|editor
-0:6.1|just|dev|/Users/test/project|server
-EOF
-
-cmds=""
-while IFS='|' read -r target tool sid cwd wname; do
-    [[ "$target" =~ ^#.*$ ]] && continue
-    [ -z "$target" ] && continue
-    case "$tool" in
-        claude)
-            if [ "$sid" = "picker" ]; then
-                cmds="${cmds}cd \"$cwd\" && ccy --resume\n"
-            else
-                cmds="${cmds}cd \"$cwd\" && ccy --resume $sid\n"
-            fi
-            ;;
-        codex)
-            if [ "$sid" = "picker" ]; then
-                cmds="${cmds}cd \"$cwd\" && cxy resume\n"
-            else
-                cmds="${cmds}cd \"$cwd\" && cxy resume $sid\n"
-            fi
-            ;;
-        nvim)
-            cmds="${cmds}cd \"$cwd\" && nvim\n"
-            ;;
-        just)
-            cmds="${cmds}cd \"$cwd\" && just $sid\n"
-            ;;
-    esac
-done < "$tmpdir/claude-panes.txt"
-
-assert_contains "claude UUID gets ccy --resume UUID" "ccy --resume aaaaaaaa-1111-2222-3333-444444444444" "$cmds"
-assert_contains "codex UUID gets cxy resume UUID" "cxy resume bbbbbbbb-5555-6666-7777-888888888888" "$cmds"
-assert_contains "claude picker gets ccy --resume" "ccy --resume" "$cmds"
-assert_contains "codex picker gets cxy resume" "cxy resume" "$cmds"
-assert_contains "nvim pane opens nvim" "nvim" "$cmds"
-assert_contains "just pane runs recipe" "just dev" "$cmds"
-assert_eq "6 commands total" "6" "$(echo -e "$cmds" | grep -c '.')"
-
-rm -rf "$tmpdir"
-
-# ============================================================
 echo ""
 echo "=== session-restore: empty/missing mapping file ==="
 # ============================================================
@@ -1065,54 +1011,6 @@ fi
 
 unset -f write_hook_tmux_stub setup_hook_fixture run_hook_fixture
 unset -f write_real_hook_ps_stub setup_real_hook_fixture
-
-# ============================================================
-echo ""
-echo "=== session-restore: paths with spaces ==="
-# ============================================================
-
-tmpdir=$(mktemp -d)
-cat > "$tmpdir/claude-panes.txt" <<'EOF'
-0:1.1|claude|abc-123|/Users/test/my project/src|spaced-path
-EOF
-
-cmds=""
-while IFS='|' read -r target tool sid cwd wname; do
-    [[ "$target" =~ ^#.*$ ]] && continue
-    [ -z "$target" ] && continue
-    if [ "$tool" = "claude" ]; then
-        cmds="cd \"$cwd\" && ccy --resume $sid"
-    fi
-done < "$tmpdir/claude-panes.txt"
-
-assert_contains "path with space is quoted" 'cd "/Users/test/my project/src"' "$cmds"
-
-rm -rf "$tmpdir"
-
-# ============================================================
-echo ""
-echo "=== session-restore: comment and blank line handling ==="
-# ============================================================
-
-tmpdir=$(mktemp -d)
-cat > "$tmpdir/claude-panes.txt" <<'EOF'
-# This is a comment
-# Another comment
-
-0:1.1|claude|abc-123|/tmp|win1
-
-EOF
-
-count=0
-while IFS='|' read -r target tool sid cwd wname; do
-    [[ "$target" =~ ^#.*$ ]] && continue
-    [ -z "$target" ] && continue
-    count=$((count + 1))
-done < "$tmpdir/claude-panes.txt"
-
-assert_eq "skips comments and blanks, finds 1 entry" "1" "$count"
-
-rm -rf "$tmpdir"
 
 # ============================================================
 echo ""
@@ -2176,15 +2074,10 @@ assert_eq "v2 header → version 2" \
     "2" \
     "$(snapshot_detect_version "$tmpdir/v2.txt")"
 
-printf '0:1.1|codex|abc|/cwd|fine-tuning\n' > "$tmpdir/v1.txt"
-assert_eq "pipe-delimited no-header → version 1" \
-    "1" \
-    "$(snapshot_detect_version "$tmpdir/v1.txt")"
-
-printf '# Claude/Codex session mapping — Sat\n# Format: a|b\n0:1.1|codex|abc|/cwd|x\n' > "$tmpdir/v1-commented.txt"
-assert_eq "pipe rows after comments → version 1" \
-    "1" \
-    "$(snapshot_detect_version "$tmpdir/v1-commented.txt")"
+printf '0:1.1|codex|abc|/cwd|fine-tuning\n' > "$tmpdir/pipe.txt"
+assert_eq "old pipe-delimited format → unrecognized (-1)" \
+    "-1" \
+    "$(snapshot_detect_version "$tmpdir/pipe.txt")"
 
 printf '# tmux-claude snapshot v9\n' > "$tmpdir/v9.txt"
 assert_eq "v9 header → version 9 (caller decides what to do)" \
@@ -2210,73 +2103,7 @@ assert_eq "comments plus whitespace-only lines → version 0" \
     "0" \
     "$(snapshot_detect_version "$tmpdir/comments-whitespace-only.txt")"
 
-printf '  \n\t\n0:1.1|codex|abc|/cwd|x\n' > "$tmpdir/v1-after-whitespace.txt"
-assert_eq "whitespace-only lines before pipe row → version 1" \
-    "1" \
-    "$(snapshot_detect_version "$tmpdir/v1-after-whitespace.txt")"
-
 rm -rf "$tmpdir"
-
-# ============================================================
-echo ""
-echo "=== lib/snapshot: promote_v1_row ==="
-# ============================================================
-
-assert_eq "claude+UUID → uuid kind" \
-    "0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf uuid" \
-    "$(promote_v1_row claude 0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf)"
-
-assert_eq "claude+picker → picker kind" \
-    "picker picker" \
-    "$(promote_v1_row claude picker)"
-
-assert_eq "claude+nonsense → none kind, sid=-" \
-    "- none" \
-    "$(promote_v1_row claude not-a-uuid)"
-
-assert_eq "codex+UUID → uuid kind" \
-    "019dd3be-9166-7750-8039-a1f9ecdad1f3 uuid" \
-    "$(promote_v1_row codex 019dd3be-9166-7750-8039-a1f9ecdad1f3)"
-
-assert_eq "codex+picker → picker kind" \
-    "picker picker" \
-    "$(promote_v1_row codex picker)"
-
-assert_eq "nvim+picker → none kind (sid discarded — historical sentinel)" \
-    "- none" \
-    "$(promote_v1_row nvim picker)"
-
-assert_eq "nvim+empty → none kind" \
-    "- none" \
-    "$(promote_v1_row nvim '')"
-
-assert_eq "just+dev → recipe kind, sid preserved" \
-    "dev recipe" \
-    "$(promote_v1_row just dev)"
-
-assert_eq "just+empty → none kind" \
-    "- none" \
-    "$(promote_v1_row just '')"
-
-assert_eq "just+spaced-recipe → recipe kind, sid preserved" \
-    "dev server recipe" \
-    "$(promote_v1_row just "dev server")"
-
-assert_eq "just+complex-recipe-name → recipe kind" \
-    "test:unit recipe" \
-    "$(promote_v1_row just test:unit)"
-
-assert_eq "unknown tool → none kind" \
-    "- none" \
-    "$(promote_v1_row xargs foo)"
-
-assert_eq "claude+UPPERCASE UUID → normalized lowercase, uuid kind" \
-    "0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf uuid" \
-    "$(promote_v1_row claude 0CBB1761-1A50-4CC4-8E7D-7B4BBDC788BF)"
-
-assert_eq "claude+mixed-case UUID → normalized lowercase" \
-    "0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf uuid" \
-    "$(promote_v1_row claude 0cbb1761-1A50-4cc4-8E7D-7b4bbdc788bf)"
 
 # ============================================================
 echo ""
@@ -2440,102 +2267,6 @@ assert_eq "consumer pattern: flags correctly empty" "" "$flags"
 
 # ============================================================
 echo ""
-echo "=== lib/snapshot: read v1 legacy fallback ==="
-# ============================================================
-
-tmpdir=$(mktemp -d)
-stdout="$tmpdir/stdout.txt"
-stderr="$tmpdir/stderr.txt"
-snapshot_read "$PLUGIN_DIR/tests/fixtures/v1-snapshot.txt" >"$stdout" 2>"$stderr"
-read_status=$?
-rows=$(cat "$stdout")
-logs=$(cat "$stderr")
-
-assert_eq "snapshot_read v1 fixture exits 0" \
-    "0" \
-    "$read_status"
-
-assert_eq "v1 fixture promotes 5 rows" \
-    "5" \
-    "$(printf '%s\n' "$rows" | wc -l | tr -d ' ')"
-
-while IFS= read -r row_line; do
-    nf=$(printf '%s' "$row_line" | awk -F'\t' '{print NF}')
-    assert_eq "v1 promoted row has exactly 8 fields" "8" "$nf"
-done < "$stdout"
-
-codex_row=$(printf '%s\n' "$rows" | sed -n '1p')
-assert_eq "v1 codex UUID sid preserved" \
-    "019dd3be-9166-7750-8039-a1f9ecdad1f3" \
-    "$(printf '%s' "$codex_row" | cut -f3)"
-assert_eq "v1 codex UUID sid_kind uuid" \
-    "uuid" \
-    "$(printf '%s' "$codex_row" | cut -f4)"
-
-nvim_row=$(printf '%s\n' "$rows" | sed -n '2p')
-assert_eq "v1 nvim picker sid discarded" \
-    "-" \
-    "$(printf '%s' "$nvim_row" | cut -f3)"
-assert_eq "v1 nvim picker sid_kind none" \
-    "none" \
-    "$(printf '%s' "$nvim_row" | cut -f4)"
-
-claude_invalid_row=$(printf '%s\n' "$rows" | sed -n '3p')
-assert_eq "v1 claude non-uuid sid discarded" \
-    "-" \
-    "$(printf '%s' "$claude_invalid_row" | cut -f3)"
-assert_eq "v1 claude non-uuid sid_kind none" \
-    "none" \
-    "$(printf '%s' "$claude_invalid_row" | cut -f4)"
-
-just_row=$(printf '%s\n' "$rows" | sed -n '5p')
-assert_eq "v1 just recipe preserved" \
-    "dev" \
-    "$(printf '%s' "$just_row" | cut -f3)"
-assert_eq "v1 just recipe sid_kind recipe" \
-    "recipe" \
-    "$(printf '%s' "$just_row" | cut -f4)"
-
-while IFS= read -r row_line; do
-    assert_eq "v1 promoted row original_cwd empty" \
-        "" \
-        "$(printf '%s' "$row_line" | cut -f6)"
-    assert_eq "v1 promoted row flags empty" \
-        "" \
-        "$(printf '%s' "$row_line" | cut -f8)"
-done < "$stdout"
-
-assert_contains "v1 read logs LEGACY warning" \
-    "LEGACY v1 snapshot read" \
-    "$logs"
-assert_contains "v1 read log mentions row count" \
-    "5 rows" \
-    "$logs"
-
-rm -rf "$tmpdir"
-
-# ============================================================
-echo ""
-echo "=== lib/snapshot: read v1 spaced just recipe ==="
-# ============================================================
-
-tmpdir=$(mktemp -d)
-cat > "$tmpdir/v1-spaced-just.txt" <<'EOF'
-0:19.1|just|dev server|/cwd|win
-EOF
-
-spaced_row=$(snapshot_read "$tmpdir/v1-spaced-just.txt" 2>/dev/null)
-assert_eq "v1 spaced just recipe preserves full sid" \
-    "dev server" \
-    "$(printf '%s' "$spaced_row" | cut -f3)"
-assert_eq "v1 spaced just recipe kind" \
-    "recipe" \
-    "$(printf '%s' "$spaced_row" | cut -f4)"
-
-rm -rf "$tmpdir"
-
-# ============================================================
-echo ""
 echo "=== lib/snapshot: read v2 whitespace-only lines ==="
 # ============================================================
 
@@ -2605,44 +2336,6 @@ assert_contains "malformed v2 survivor is target 0:2.1" \
 assert_contains "malformed v2 logs WARN" "WARN" "$err"
 assert_contains "malformed v2 stderr says 'malformed v2 row'" \
     "malformed v2 row" "$err"
-
-# --- Malformed v1 row (3 pipes, not 4) ---
-{
-    printf '0:1.1|codex|abc|/cwd|fine-tuning\n'                    # 5 fields ok
-    printf '0:2.1|claude|missing-fields\n'                         # 3 fields — short!
-} > "$tmpdir/malformed-v1.txt"
-
-out=$(snapshot_read "$tmpdir/malformed-v1.txt" 2>"$tmpdir/mv1.err")
-err=$(cat "$tmpdir/mv1.err")
-row_count=$(printf '%s\n' "$out" | grep -c $'^[^\t]' || true)
-
-assert_eq "malformed v1: 1 good row promoted, 1 short row skipped" \
-    "1" "$row_count"
-assert_contains "malformed v1 survivor is target 0:1.1" \
-    $'0:1.1\tcodex' "$out"
-assert_contains "malformed v1 survivor sid kind is none" \
-    $'\t-\tnone\t' "$out"
-assert_contains "malformed v1 logs WARN" "WARN" "$err"
-assert_contains "malformed v1 stderr says 'malformed v1 row'" \
-    "malformed v1 row" "$err"
-
-# --- Malformed v1 row (6 pipes — extra | in cwd) ---
-{
-    printf '0:3.1|codex|def|/cwd/with|pipe|win\n'                  # 6 fields — extra!
-    printf '0:4.1|claude|ghi|/clean|win\n'                         # 5 fields ok
-} > "$tmpdir/malformed-v1-extra.txt"
-
-out=$(snapshot_read "$tmpdir/malformed-v1-extra.txt" 2>"$tmpdir/mv1e.err")
-err=$(cat "$tmpdir/mv1e.err")
-row_count=$(printf '%s\n' "$out" | grep -c $'^[^\t]' || true)
-
-assert_eq "v1 with extra pipe: extra-field row skipped, clean row promoted" \
-    "1" "$row_count"
-assert_contains "extra-pipe survivor is target 0:4.1" \
-    $'0:4.1\tclaude' "$out"
-assert_not_contains "extra-pipe malformed target is skipped" \
-    "0:3.1" "$out"
-assert_contains "extra-pipe row logs WARN" "WARN" "$err"
 
 rm -rf "$tmpdir"
 
@@ -2715,7 +2408,6 @@ elif [ ! -s "$HOME/.config/tmux/resurrect/claude-panes.txt" ]; then
 else
     real_snapshot="$HOME/.config/tmux/resurrect/claude-panes.txt"
     tmpdir=$(mktemp -d)
-    snapshot_version=$(snapshot_detect_version "$real_snapshot")
     rows=$(snapshot_read "$real_snapshot" 2>"$tmpdir/smoke.err"); rc=$?
     err=$(cat "$tmpdir/smoke.err")
 
@@ -2733,20 +2425,10 @@ else
         fi
 
         unexpected_logs=$(printf '%s\n' "$err" | grep -E 'WARN|ERROR' || true)
-        if [ "$snapshot_version" = "1" ]; then
-            unexpected_logs=$(printf '%s\n' "$unexpected_logs" \
-                              | grep -vF 'LEGACY v1 snapshot read' || true)
-        fi
         if [ -n "$unexpected_logs" ]; then
             red "  FAIL: snapshot_read logged unexpected WARN/ERROR for live snapshot"
             red "    stderr: $err"
             fail=$((fail + 1))
-        fi
-
-        # LEGACY warning expected for v1 input (current live format).
-        if [ "$snapshot_version" = "1" ]; then
-            assert_contains "LEGACY warning logged for v1 input" \
-                "LEGACY" "$err"
         fi
 
         if [ "$row_count" -eq 0 ]; then
@@ -3776,6 +3458,15 @@ tmux() {
                 printf 'CONT> printf %%s\\\\n %s\n' "${TMUX_CLAUDE_READY_MARKER:-}"
                 return 0
             fi
+            if [ "${MOCK_CAPTURE_AFTER_SEND:-}" = "slow" ] && \
+                [ -f "$MOCK_TMUX_LOG" ] && \
+                grep -qF "send-keys -t %1 printf '" "$MOCK_TMUX_LOG"; then
+                printf 'x\n' >> "$MOCK_TMUX_LOG.polls"
+                if [ "$(wc -l < "$MOCK_TMUX_LOG.polls")" -gt 25 ]; then
+                    printf '%s\n' "__tcready_forced__"
+                fi
+                return 0
+            fi
             printf '%s\n' "$MOCK_CAPTURE"
             ;;
         *) return 1 ;;
@@ -3842,8 +3533,8 @@ assert_eq "restore_sid_valid accepts none sentinel" \
     "$(restore_sid_valid "-" none; echo $?)"
 
 MOCK_PANE_COMMAND=claude
-assert_eq "wait_for_prompt returns nonzero for non-shell foreground" \
-    "1" \
+assert_eq "wait_for_prompt returns 2 for non-shell foreground" \
+    "2" \
     "$(wait_for_prompt "%1"; echo $?)"
 
 MOCK_PANE_COMMAND=fish
@@ -3860,63 +3551,73 @@ assert_not_contains "wait_for_prompt probe does not type literal marker" \
     "__tcready_forced__" \
     "$(cat "$MOCK_TMUX_LOG")"
 
+# A shell that is slow to start (tmux server boot) answers after more polls than the old
+# fixed 20-attempt budget allowed; observed 2026-11-12, pane not ready after 10s.
+MOCK_CAPTURE_AFTER_SEND=slow
+TMUX_CLAUDE_PROMPT_SLEEP=0
+assert_eq "wait_for_prompt keeps waiting for a slow shell" \
+    "0" \
+    "$(wait_for_prompt "%1"; echo $?)"
+unset TMUX_CLAUDE_PROMPT_SLEEP
+rm -f "$MOCK_TMUX_LOG.polls"
+
 unset TMUX_CLAUDE_READY_MARKER
 unset MOCK_CAPTURE_AFTER_SEND
 
 MOCK_CAPTURE="old __tcready_stale__"
 TMUX_CLAUDE_READY_MARKER="__tcready_fresh__"
-TMUX_CLAUDE_PROMPT_ATTEMPTS=1
+TMUX_CLAUDE_PROMPT_TIMEOUT=0
 TMUX_CLAUDE_PROMPT_SLEEP=0
 assert_eq "wait_for_prompt ignores stale marker with different fresh marker" \
     "1" \
     "$(wait_for_prompt "%1"; echo $?)"
 unset TMUX_CLAUDE_READY_MARKER
-unset TMUX_CLAUDE_PROMPT_ATTEMPTS
+unset TMUX_CLAUDE_PROMPT_TIMEOUT
 unset TMUX_CLAUDE_PROMPT_SLEEP
 
 MOCK_PANE_COMMAND=fish
 MOCK_CAPTURE="old __tcready_same__"
 TMUX_CLAUDE_READY_MARKER="__tcready_same__"
-TMUX_CLAUDE_PROMPT_ATTEMPTS=1
+TMUX_CLAUDE_PROMPT_TIMEOUT=0
 TMUX_CLAUDE_PROMPT_SLEEP=0
 assert_eq "wait_for_prompt rejects same-marker stale scrollback" \
     "1" \
     "$(wait_for_prompt "%1"; echo $?)"
 unset TMUX_CLAUDE_READY_MARKER
-unset TMUX_CLAUDE_PROMPT_ATTEMPTS
+unset TMUX_CLAUDE_PROMPT_TIMEOUT
 unset TMUX_CLAUDE_PROMPT_SLEEP
 
 rm -f "$MOCK_TMUX_LOG"
 MOCK_CAPTURE=""
 MOCK_CAPTURE_AFTER_SEND=wrapped
 TMUX_CLAUDE_READY_MARKER="__tcready_wrapped__"
-TMUX_CLAUDE_PROMPT_ATTEMPTS=1
+TMUX_CLAUDE_PROMPT_TIMEOUT=0
 TMUX_CLAUDE_PROMPT_SLEEP=0
 assert_eq "wait_for_prompt succeeds when marker wraps visually" \
     "0" \
     "$(wait_for_prompt "%1"; echo $?)"
 unset MOCK_CAPTURE_AFTER_SEND
 unset TMUX_CLAUDE_READY_MARKER
-unset TMUX_CLAUDE_PROMPT_ATTEMPTS
+unset TMUX_CLAUDE_PROMPT_TIMEOUT
 unset TMUX_CLAUDE_PROMPT_SLEEP
 
 MOCK_CAPTURE=""
 MOCK_CAPTURE_AFTER_SEND=continuation
 TMUX_CLAUDE_READY_MARKER="__tcready_cont__"
-TMUX_CLAUDE_PROMPT_ATTEMPTS=1
+TMUX_CLAUDE_PROMPT_TIMEOUT=0
 TMUX_CLAUDE_PROMPT_SLEEP=0
 assert_eq "wait_for_prompt rejects continuation prompt echoed marker" \
     "1" \
     "$(wait_for_prompt "%1"; echo $?)"
 unset MOCK_CAPTURE_AFTER_SEND
 unset TMUX_CLAUDE_READY_MARKER
-unset TMUX_CLAUDE_PROMPT_ATTEMPTS
+unset TMUX_CLAUDE_PROMPT_TIMEOUT
 unset TMUX_CLAUDE_PROMPT_SLEEP
 
 rm -f "$MOCK_TMUX_LOG"
 MOCK_CAPTURE=""
 TMUX_CLAUDE_READY_MARKER="bad;touch"
-TMUX_CLAUDE_PROMPT_ATTEMPTS=1
+TMUX_CLAUDE_PROMPT_TIMEOUT=0
 TMUX_CLAUDE_PROMPT_SLEEP=0
 assert_eq "wait_for_prompt rejects unsafe marker override" \
     "1" \
@@ -3925,7 +3626,7 @@ assert_eq "wait_for_prompt does not send unsafe marker override" \
     "absent" \
     "$([ -f "$MOCK_TMUX_LOG" ] && echo present || echo absent)"
 unset TMUX_CLAUDE_READY_MARKER
-unset TMUX_CLAUDE_PROMPT_ATTEMPTS
+unset TMUX_CLAUDE_PROMPT_TIMEOUT
 unset TMUX_CLAUDE_PROMPT_SLEEP
 
 unset -f tmux
@@ -4023,14 +3724,15 @@ mkdir -p "$tmpbin" "$resurrect_dir"
 rm -f "$pwned"
 
 cat > "$resurrect_dir/claude-panes.txt" <<'EOF'
-# Claude/Codex session mapping — v1 fixture for Chunk 3 restore
-0:1.1|claude|0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf|/repo/claude|fine tuning
-0:2.1|codex|019dd3be-9166-7750-8039-a1f9ecdad1f3|/repo/codex|codex-win
-0:3.1|claude|picker|/repo/picker|picker-win
-0:4.1|nvim|picker|/repo/edit|editor
-0:5.1|just|dev|/repo/app|server
+# tmux-claude snapshot v2
+# fields: target	tool	sid	sid_kind	cwd	original_cwd	wname	flags
+0:1.1	claude	0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf	uuid	/repo/claude		fine tuning	-
+0:2.1	codex	019dd3be-9166-7750-8039-a1f9ecdad1f3	uuid	/repo/codex		codex-win	-
+0:3.1	claude	picker	picker	/repo/picker		picker-win	-
+0:4.1	nvim	-	none	/repo/edit		editor	-
+0:5.1	just	dev	recipe	/repo/app		server	-
 EOF
-printf "0:6.1|claude|0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf|/repo/evil'; touch '%s'; echo '|bad;name\n" "$pwned" >> "$resurrect_dir/claude-panes.txt"
+printf "0:6.1\tclaude\t0cbb1761-1a50-4cc4-8e7d-7b4bbdc788bf\tuuid\t/repo/evil'; touch '%s'; echo '\t\tbad;name\t-\n" "$pwned" >> "$resurrect_dir/claude-panes.txt"
 
 cat > "$tmpbin/tmux" <<EOF
 #!/usr/bin/env bash
@@ -5033,7 +4735,7 @@ ORIG_PATH="$PATH"
 PATH="$tmpbin:$PATH"
 TMUX_CLAUDE_RESTORE_BOOT_DELAY=0 \
 TMUX_CLAUDE_READY_MARKER="__tcready_forced__" \
-TMUX_CLAUDE_PROMPT_ATTEMPTS=1 \
+TMUX_CLAUDE_PROMPT_TIMEOUT=0 \
 TMUX_CLAUDE_PROMPT_SLEEP=0 \
 bash "$PLUGIN_DIR/scripts/session-restore.sh"
 rc=$?
@@ -5042,8 +4744,8 @@ PATH="$ORIG_PATH"
 send_log=$(cat "$tmpdir/send-keys.log")
 restore_log_content=$(cat "$resurrect_dir/restore.log")
 assert_eq "restore live exits 0 despite one busy pane" "0" "$rc"
-assert_contains "restore live logs prompt wait skip for busy pane" \
-    "SKIP 0:1.1 claude prompt_wait_timeout" "$restore_log_content"
+assert_contains "restore live logs busy pane skip" \
+    "SKIP 0:1.1 claude pane_busy" "$restore_log_content"
 assert_contains "restore live waits with encoded marker before sending restore command" \
     "printf '" "$send_log"
 assert_not_contains "restore live wait probe does not type literal marker" \

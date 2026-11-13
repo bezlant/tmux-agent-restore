@@ -221,9 +221,15 @@ while IFS= read -r row || [ -n "$row" ]; do
         continue
     fi
 
-    if ! wait_for_prompt "$target"; then
+    wait_rc=0
+    wait_for_prompt "$target" || wait_rc=$?
+    if [ "$wait_rc" -ne 0 ]; then
         skip=$((skip + 1))
-        restore_log SKIP "$log_target $log_tool prompt_wait_timeout"
+        if [ "$wait_rc" -eq 2 ]; then
+            restore_log SKIP "$log_target $log_tool pane_busy"
+        else
+            restore_log SKIP "$log_target $log_tool prompt_wait_timeout"
+        fi
         continue
     fi
 

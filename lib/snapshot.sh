@@ -52,47 +52,11 @@ snapshot_detect_version() {
             *[![:space:]]*) ;;
             *) continue ;;
         esac
-        if [[ "$line" == *"|"* ]] && [[ "$line" != *$'\t'* ]]; then
-            echo 1
-            return
-        fi
         echo -1
         return
     done < "$file"
 
     echo 0
-}
-
-# promote_v1_row <tool> <sid>
-# Emits "<sid> <sid_kind>". Consumers must split on the LAST space:
-# sid_kind is the final token, and sid may contain spaces for just recipes.
-promote_v1_row() {
-    local tool="$1"
-    local sid="$2"
-
-    case "$tool" in
-        claude|codex)
-            if [ "$sid" = "picker" ]; then
-                printf '%s %s\n' "picker" "picker"
-                return
-            fi
-
-            local normalized_sid
-            normalized_sid=$(printf '%s' "$sid" | tr 'A-F' 'a-f')
-            if [[ "$normalized_sid" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
-                printf '%s %s\n' "$normalized_sid" "uuid"
-                return
-            fi
-            ;;
-        just)
-            if [ -n "$sid" ]; then
-                printf '%s %s\n' "$sid" "recipe"
-                return
-            fi
-            ;;
-    esac
-
-    printf '%s %s\n' "-" "none"
 }
 
 snapshot_write_row() {
@@ -174,9 +138,8 @@ snapshot_write_row() {
 
 # snapshot_read <file>
 # Emits v2 rows on stdout, one per line, EXACTLY 8 TAB-separated
-# fields, fields percent-encoded. Auto-detects v1 (legacy pipe format)
-# and promotes via promote_v1_row. Logs LEGACY to stderr.
-# Aborts with non-zero exit + ERROR log if version is unknown (-1 or >=3).
+# fields, fields percent-encoded.
+# Aborts with non-zero exit + ERROR log if the version is not 2.
 snapshot_read() {
     local file="$1"
     local version
@@ -185,9 +148,6 @@ snapshot_read() {
     case "$version" in
         0)
             return 0  # empty/missing file = empty snapshot
-            ;;
-        1)
-            _snapshot_read_v1 "$file"
             ;;
         2)
             _snapshot_read_v2 "$file"
@@ -201,40 +161,6 @@ snapshot_read() {
             return 1
             ;;
     esac
-}
-
-# Internal: read legacy v1 pipe rows and promote to v2 rows.
-_snapshot_read_v1() {
-    local file="$1" line lineno=0 count=0
-    while IFS= read -r line || [ -n "$line" ]; do
-        lineno=$((lineno + 1))
-        [[ "$line" == \#* ]] && continue
-        case "$line" in
-            *[![:space:]]*) ;;
-            *) continue ;;
-        esac
-
-        local nf
-        nf=$(printf '%s' "$line" | awk -F'|' '{print NF}')
-
-        if [ "$nf" -ne 5 ]; then
-            snapshot_log WARN "malformed v1 row at line $lineno of $file (got $nf fields, need 5); skipping"
-            continue
-        fi
-
-        local target tool sid cwd wname
-        IFS='|' read -r target tool sid cwd wname <<<"$line"
-
-        local promoted promoted_sid promoted_kind
-        promoted=$(promote_v1_row "$tool" "$sid")
-        promoted_sid="${promoted% *}"
-        promoted_kind="${promoted##* }"
-
-        snapshot_write_row "$target" "$tool" "$promoted_sid" "$promoted_kind" "$cwd" "" "$wname" ""
-        count=$((count + 1))
-    done < "$file"
-
-    snapshot_log WARN "LEGACY v1 snapshot read ($count rows from $file)"
 }
 
 # Internal: read v2 rows, skipping comment + blank lines.

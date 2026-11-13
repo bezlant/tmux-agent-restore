@@ -145,14 +145,16 @@ EOF
     printf '%s\\n' "$fmt"
 }
 
+# Returns 0 when the pane's shell answered, 1 when it did not answer in time, and 2 when the
+# pane is not at a shell at all (something is already running there).
 wait_for_prompt() {
     local target="$1"
-    local fg_cmd marker marker_format attempts max_attempts sleep_seconds
+    local fg_cmd marker marker_format deadline sleep_seconds
 
     fg_cmd=$(tmux display-message -p -t "$target" '#{pane_current_command}' 2>/dev/null || true)
     case "$fg_cmd" in
         fish|bash|zsh|sh|dash|ksh) ;;
-        *) return 1 ;;
+        *) return 2 ;;
     esac
 
     if [ -n "${TMUX_CLAUDE_READY_MARKER:-}" ]; then
@@ -172,17 +174,18 @@ wait_for_prompt() {
     marker_format=$(restore_marker_printf_format "$marker") || return 1
     tmux send-keys -t "$target" "printf '$marker_format'" Enter 2>/dev/null || return 1
 
-    max_attempts="${TMUX_CLAUDE_PROMPT_ATTEMPTS:-20}"
+    # A time budget, not a poll count: right after the tmux server starts a shell can take
+    # well over the ~2s that 20 polls allowed (a pane was still not ready after 10s), and the
+    # agent in that pane was then never relaunched.
+    deadline=$((SECONDS + ${TMUX_CLAUDE_PROMPT_TIMEOUT:-30}))
     sleep_seconds="${TMUX_CLAUDE_PROMPT_SLEEP:-0.1}"
-    attempts=0
-    while [ "$attempts" -lt "$max_attempts" ]; do
+    while :; do
         if tmux capture-pane -J -p -t "$target" -S - -E - 2>/dev/null | grep -Fxq -- "$marker"; then
             return 0
         fi
+        [ "$SECONDS" -lt "$deadline" ] || return 1
         sleep "$sleep_seconds"
-        attempts=$((attempts + 1))
     done
-    return 1
 }
 
 restore_send_keys() {

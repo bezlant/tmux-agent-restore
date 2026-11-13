@@ -112,7 +112,7 @@ Survives tmux server restart (reboot). Requires tmux-resurrect and SessionStart 
 target    tool    sid    sid_kind    cwd    original_cwd    wname    flags
 ```
 
-If `@resurrect-dir` is not set, save/restore use `~/.tmux/resurrect`. Legacy pipe-delimited snapshots are still readable during restore.
+If `@resurrect-dir` is not set, save/restore use `~/.tmux/resurrect`.
 
 Restore writes `restore.log` beside the snapshot with `BEGIN`, `OK`, `WARN`, `SKIP`, and `END` lines so failed or degraded panes can be inspected after restore.
 
