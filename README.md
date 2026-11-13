@@ -1,23 +1,23 @@
-# tmux-claude
+# tmux-agent-restore
 
-tmux plugin for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and [Codex](https://openai.com/index/introducing-codex/) session management.
+Restores [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and [Codex](https://openai.com/index/introducing-codex/) agent sessions after a tmux server restart, on top of [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect). Formerly `tmux-claude`.
 
 Two features:
 
-1. **Stable naming** — starting Claude in a pane creates a fresh session with a tmux-derived name, with explicit opt-in resume
-2. **Save/restore** — survives tmux server restart (reboot) via tmux-resurrect integration
+1. **Save/restore** — after a reboot, each pane gets its agent back in the same conversation (`nvim` and `just` panes are relaunched too)
+2. **Stable naming** — starting Claude in a pane creates a fresh session named after its tmux window
 
 ## Requirements
 
 - tmux >= 3.2
 - [TPM](https://github.com/tmux-plugins/tpm)
 - [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) (for save/restore)
-- python3 (for session lookup)
+- python3 (used by the session hooks)
 
 ## Install
 
 ```tmux
-set -g @plugin 'bezlant/tmux-claude'
+set -g @plugin 'bezlant/tmux-agent-restore'
 ```
 
 `prefix + I` to install.
@@ -36,7 +36,7 @@ These hooks write session IDs to tmux pane variables so the plugin can map panes
     "SessionStart": [{
       "hooks": [{
         "type": "command",
-        "command": "bash ~/.config/tmux/plugins/tmux-claude/scripts/claude-session-hook.sh"
+        "command": "bash ~/.config/tmux/plugins/tmux-agent-restore/scripts/claude-session-hook.sh"
       }]
     }]
   }
@@ -51,7 +51,7 @@ These hooks write session IDs to tmux pane variables so the plugin can map panes
     "SessionStart": [{
       "hooks": [{
         "type": "command",
-        "command": "bash ~/.config/tmux/plugins/tmux-claude/scripts/codex-session-hook.sh"
+        "command": "bash ~/.config/tmux/plugins/tmux-agent-restore/scripts/codex-session-hook.sh"
       }]
     }]
   }
@@ -60,20 +60,12 @@ These hooks write session IDs to tmux pane variables so the plugin can map panes
 
 ### 2. Shell wrapper (stable naming)
 
-The plugin auto-installs the fish wrapper on `prefix + I`. For other shells:
-
-```sh
-# Bash (add to ~/.bashrc)
-source ~/.config/tmux/plugins/tmux-claude/shell/claude.bash
-
-# Zsh (add to ~/.zshrc)
-source ~/.config/tmux/plugins/tmux-claude/shell/claude.zsh
-```
+The plugin auto-installs the fish wrapper on `prefix + I`. Only fish is supported.
 
 To disable fish auto-install:
 
 ```tmux
-set -g @tmux-claude-auto-install-wrapper off
+set -g @tmux-agent-restore-auto-install-wrapper off
 ```
 
 ## Features
@@ -91,11 +83,7 @@ When you type `claude` in a pane, the wrapper:
 2. Passes `--name <name>`
 3. Starts a fresh session with that name
 
-To opt into tmux-name based resume, run `claude --tmux-resume` or set `TMUX_CLAUDE_AUTO_RESUME=1`. In that mode, the wrapper scans `~/.claude/projects/<encoded-path>/*.jsonl` for a session whose `customTitle` matches and passes `--resume <uuid> --name <name>` when it finds one.
-
 **Bypass**: passing `--resume`, `--continue`, `--name`, or `-p` explicitly skips the wrapper logic.
-
-**`/clear` behavior**: `/clear` keeps the same session ID, but a plain `claude` launch is fresh by default. Use `claude --tmux-resume` only when you intentionally want the named cleared session back.
 
 ### Save/restore
 
@@ -114,7 +102,7 @@ target    tool    sid    sid_kind    cwd    original_cwd    wname    flags
 
 If `@resurrect-dir` is not set, save/restore use `~/.tmux/resurrect`.
 
-Restore writes `restore.log` beside the snapshot with `BEGIN`, `OK`, `WARN`, `SKIP`, and `END` lines so failed or degraded panes can be inspected after restore.
+Restore writes `restore.log` beside the snapshot with `BEGIN`, `OK`, `WARN`, `SKIP`, and `END` lines so failed or degraded panes can be inspected after restore. A pane that is already running something is skipped as `pane_busy`; a pane whose shell does not answer within 30 seconds is skipped as `prompt_wait_timeout`.
 
 **Tools restored:**
 
@@ -135,55 +123,27 @@ Restore writes `restore.log` beside the snapshot with `BEGIN`, `OK`, `WARN`, `SK
 
 ```bash
 # Save current state
-bash ~/.config/tmux/plugins/tmux-claude/scripts/session-save.sh
+bash ~/.config/tmux/plugins/tmux-agent-restore/scripts/session-save.sh
 
 # Preview what restore would do
-bash ~/.config/tmux/plugins/tmux-claude/scripts/session-restore.sh --dry-run
-
-# Audit every live tmux pane for restore readiness
-bash ~/.config/tmux/plugins/tmux-claude/scripts/session-audit.sh
+bash ~/.config/tmux/plugins/tmux-agent-restore/scripts/session-restore.sh --dry-run
 
 # Restore
-bash ~/.config/tmux/plugins/tmux-claude/scripts/session-restore.sh
+bash ~/.config/tmux/plugins/tmux-agent-restore/scripts/session-restore.sh
 ```
-
-`session-audit.sh` exits non-zero when a live Claude/Codex pane would only restore as a picker or has an invalid UUID artifact.
-
-### Post-reboot attach helper
-
-For fish users, the plugin can install a `tres` helper:
-
-```fish
-tres
-```
-
-`tres` starts a temporary bootstrap tmux server when needed, reads the saved tmux-resurrect session name from `~/.config/tmux/resurrect/last`, waits for the restored window count to stabilize, then attaches to that restored session. It falls back to session `0` when no snapshot is available.
-
-If `@resurrect-dir` is set, `tres` reads `last` from that configured directory. If you already have a custom `~/.config/fish/functions/tres.fish`, the plugin will not overwrite it; copy `shell/tres.fish` manually if you want the plugin helper.
 
 ## Configuration
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `@tmux-claude-auto-install-wrapper` | `on` | Auto-install fish wrapper to `~/.config/fish/functions/` |
-| `TMUX_CLAUDE_MAX_SAVES` | `20` | Max resurrect save files to keep |
+| `@tmux-agent-restore-auto-install-wrapper` | `on` | Auto-install fish wrapper to `~/.config/fish/functions/` |
+| `TMUX_AGENT_RESTORE_MAX_SAVES` | `20` | Max resurrect save files to keep |
 
 Override max saves:
 
 ```tmux
-set-environment -g TMUX_CLAUDE_MAX_SAVES 30
+set-environment -g TMUX_AGENT_RESTORE_MAX_SAVES 30
 ```
-
-## How it works (internals)
-
-Claude Code stores sessions as JSONL files in `~/.claude/projects/<encoded-path>/`. The path is encoded by replacing `/` and `.` with `-` (e.g., `/Users/foo/my.project` → `-Users-foo-my-project`).
-
-Each JSONL file starts with a `{"type":"custom-title","customTitle":"..."}` entry set at creation time. The optional `--tmux-resume` lookup scans these files (sorted newest-first by mtime) and returns the first UUID whose `customTitle` matches the computed pane name.
-
-This avoids:
-
-- `--continue` (resumes most recent session in the directory regardless of name — causes cross-pane hijacking)
-- Matching on `agentName` (can be overwritten by previous `--name` flags, leaving contaminated metadata)
 
 ## Architecture Notes
 

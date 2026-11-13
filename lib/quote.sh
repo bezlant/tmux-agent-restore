@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tmux-claude: shell quoting helpers for restore.
+# tmux-agent-restore: shell quoting helpers for restore.
 
 shell_quote_word() {
     local shell="$1"

@@ -1,4 +1,4 @@
-# tmux-claude snapshot v2
+# tmux-agent-restore snapshot v2
 # fields: target	tool	sid	sid_kind	cwd	original_cwd	wname	flags
 0:1.1	codex	019dd3be-9166-7750-8039-a1f9ecdad1f3	uuid	/Users/me/proj		fine-tuning	
 0:6.1	nvim	-	none	/Users/me/proj		analytics	

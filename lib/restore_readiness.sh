@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tmux-claude: live pane restore-readiness rules shared by save and audit.
+# tmux-agent-restore: live pane restore-readiness rules used by save.
 
 if ! declare -F adapters_list >/dev/null 2>&1; then
     _readiness_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -8,7 +8,7 @@ if ! declare -F adapters_list >/dev/null 2>&1; then
     unset _readiness_dir
 fi
 
-if [ -z "${TMUX_CLAUDE_ADAPTERS:-}" ] && declare -F adapters_load >/dev/null 2>&1; then
+if [ -z "${TMUX_AGENT_RESTORE_ADAPTERS:-}" ] && declare -F adapters_load >/dev/null 2>&1; then
     _readiness_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
     adapters_load "$_readiness_dir"
     unset _readiness_dir
@@ -190,7 +190,6 @@ restore_readiness_detected_cwd() {
 
 restore_readiness_pane() {
     local target="$1"
-    local mode="${2:-save}"
     local detect_row tool sid sid_kind parsed_cwd cwd detect_flags wname original_cwd flags validate_fn collapsed_cwd
 
     restore_readiness_clear
@@ -212,10 +211,8 @@ restore_readiness_pane() {
         if ! declare -F "$validate_fn" >/dev/null 2>&1 ||
             ! "$validate_fn" "$sid" "$sid_kind" >/dev/null 2>&1; then
             flags=$(restore_readiness_add_flag "$flags" sid_invalid)
-            if [ "$mode" != "audit" ]; then
-                sid="-"
-                sid_kind="none"
-            fi
+            sid="-"
+            sid_kind="none"
         fi
     fi
 
@@ -252,8 +249,7 @@ restore_readiness_emit_row() {
 
 restore_readiness_pane_row() {
     local target="$1"
-    local mode="${2:-save}"
 
-    restore_readiness_pane "$target" "$mode" || return 1
+    restore_readiness_pane "$target" || return 1
     restore_readiness_emit_row
 }

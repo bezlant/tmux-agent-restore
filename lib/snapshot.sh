@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# tmux-claude: versioned snapshot reader/writer.
+# tmux-agent-restore: versioned snapshot reader/writer.
 #
 # Snapshot format v2 — see
-# docs/superpowers/specs/2026-05-22-tmux-claude-restore-architecture.md
+# docs/superpowers/specs/2026-05-22-tmux-agent-restore-restore-architecture.md
 # (Layer 2).
 #
 # 8 TAB-separated columns per row, fields percent-encoded for
@@ -31,7 +31,7 @@ if ! declare -F snapshot_log >/dev/null 2>&1; then
 fi
 
 snapshot_write_header() {
-    printf '# tmux-claude snapshot v%s\n' "$SNAPSHOT_VERSION"
+    printf '# tmux-agent-restore snapshot v%s\n' "$SNAPSHOT_VERSION"
     printf '# fields: target\ttool\tsid\tsid_kind\tcwd\toriginal_cwd\twname\tflags\n'
 }
 
@@ -43,7 +43,7 @@ snapshot_detect_version() {
 
     local line
     while IFS= read -r line || [ -n "$line" ]; do
-        if [[ "$line" == "# tmux-claude snapshot v"* ]]; then
+        if [[ "$line" == "# tmux-agent-restore snapshot v"* ]]; then
             echo "${line##*v}"
             return
         fi

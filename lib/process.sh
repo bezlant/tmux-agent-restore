@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tmux-claude: process inspection helpers shared by adapters and hooks.
+# tmux-agent-restore: process inspection helpers shared by adapters and hooks.
 
 live_agent_pid() {
     local target="$1"

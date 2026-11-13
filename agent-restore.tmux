@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tmux-claude: Better tmux integration for Claude Code agent teams
+# tmux-agent-restore: Better tmux integration for Claude Code agent teams
 # TPM-compatible plugin entry point
 
 CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -38,27 +38,18 @@ if [ -n "$resurrect_dir" ]; then
 fi
 
 # --- Shell wrapper: auto-install the composable helper ---
-install_opt=$(tmux show-option -gqv @tmux-claude-auto-install-wrapper 2>/dev/null)
+install_opt=$(tmux show-option -gqv @tmux-agent-restore-auto-install-wrapper 2>/dev/null)
 if [ "$install_opt" != "off" ]; then
-    marker="# tmux-claude:session-name"
+    marker="# tmux-agent-restore:session-name"
 
     fish_dir="$HOME/.config/fish/functions"
     if [ -d "$fish_dir" ]; then
-        cp "$SHELL_DIR/__tmux_claude_session_args.fish" "$fish_dir/" 2>/dev/null
-        cp "$SHELL_DIR/__tmux_claude_find_session.fish" "$fish_dir/" 2>/dev/null
-
-        tres_marker="# tmux-claude:tres"
-        tres_target="$fish_dir/tres.fish"
-        if [ -f "$SHELL_DIR/tres.fish" ] && [ ! -f "$tres_target" ]; then
-            cp "$SHELL_DIR/tres.fish" "$tres_target" 2>/dev/null
-        elif [ -f "$tres_target" ] && ! grep -q "$tres_marker" "$tres_target" 2>/dev/null; then
-            tmux display-message "tmux-claude: tres.fish already exists — see $SHELL_DIR/tres.fish"
-        fi
+        cp "$SHELL_DIR/__tmux_agent_restore_session_args.fish" "$fish_dir/" 2>/dev/null
 
         if [ ! -f "$fish_dir/claude.fish" ]; then
             cp "$SHELL_DIR/claude.fish" "$fish_dir/claude.fish" 2>/dev/null
         elif ! grep -q "$marker" "$fish_dir/claude.fish" 2>/dev/null; then
-            tmux display-message "tmux-claude: add session tagging to your claude.fish — see $SHELL_DIR/claude.fish"
+            tmux display-message "tmux-agent-restore: add session tagging to your claude.fish — see $SHELL_DIR/claude.fish"
         fi
     fi
 fi

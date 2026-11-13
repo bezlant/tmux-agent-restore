@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tmux-claude: restore orchestrator helpers.
+# tmux-agent-restore: restore orchestrator helpers.
 
 restore_make_display_name() {
     local wname="$1"
@@ -157,8 +157,8 @@ wait_for_prompt() {
         *) return 2 ;;
     esac
 
-    if [ -n "${TMUX_CLAUDE_READY_MARKER:-}" ]; then
-        marker="$TMUX_CLAUDE_READY_MARKER"
+    if [ -n "${TMUX_AGENT_RESTORE_READY_MARKER:-}" ]; then
+        marker="$TMUX_AGENT_RESTORE_READY_MARKER"
     elif command -v uuidgen >/dev/null 2>&1; then
         marker="__tcready_$(uuidgen | tr '[:upper:]' '[:lower:]')__"
     else
@@ -177,8 +177,8 @@ wait_for_prompt() {
     # A time budget, not a poll count: right after the tmux server starts a shell can take
     # well over the ~2s that 20 polls allowed (a pane was still not ready after 10s), and the
     # agent in that pane was then never relaunched.
-    deadline=$((SECONDS + ${TMUX_CLAUDE_PROMPT_TIMEOUT:-30}))
-    sleep_seconds="${TMUX_CLAUDE_PROMPT_SLEEP:-0.1}"
+    deadline=$((SECONDS + ${TMUX_AGENT_RESTORE_PROMPT_TIMEOUT:-30}))
+    sleep_seconds="${TMUX_AGENT_RESTORE_PROMPT_SLEEP:-0.1}"
     while :; do
         if tmux capture-pane -J -p -t "$target" -S - -E - 2>/dev/null | grep -Fxq -- "$marker"; then
             return 0

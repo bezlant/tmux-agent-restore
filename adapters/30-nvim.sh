@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tmux-claude adapter: nvim.
+# tmux-agent-restore adapter: nvim.
 
 if ! declare -F live_agent_pid >/dev/null 2>&1; then
     _adapter_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

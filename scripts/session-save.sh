@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tmux-claude: Post-save hook for tmux-resurrect.
+# tmux-agent-restore: Post-save hook for tmux-resurrect.
 
 set -euo pipefail
 
@@ -15,7 +15,7 @@ RESURRECT_DIR="${RESURRECT_DIR:-$HOME/.tmux/resurrect}"
 RESURRECT_DIR="${RESURRECT_DIR/#\~/$HOME}"
 
 PANE_MAP="${RESURRECT_DIR}/claude-panes.txt"
-MAX_SAVES=${TMUX_CLAUDE_MAX_SAVES:-20}
+MAX_SAVES=${TMUX_AGENT_RESTORE_MAX_SAVES:-20}
 LOCK_DIR="${RESURRECT_DIR}/.claude-save.lock"
 LOCK_TOKEN=""
 tmpfile=""
@@ -59,7 +59,7 @@ save_lock_process_is_save() {
 save_lock_is_old_enough() {
     local stale_seconds raw_mtime now age
 
-    stale_seconds="${TMUX_CLAUDE_SAVE_LOCK_STALE_SECONDS:-300}"
+    stale_seconds="${TMUX_AGENT_RESTORE_SAVE_LOCK_STALE_SECONDS:-300}"
     case "$stale_seconds" in
         ''|*[!0-9]*) stale_seconds=300 ;;
     esac
@@ -97,7 +97,7 @@ save_lock_reclaim_if_stale() {
 save_lock_acquire() {
     local attempts=0 max_attempts
 
-    max_attempts="${TMUX_CLAUDE_SAVE_LOCK_ATTEMPTS:-10}"
+    max_attempts="${TMUX_AGENT_RESTORE_SAVE_LOCK_ATTEMPTS:-10}"
     case "$max_attempts" in
         ''|*[!0-9]*) max_attempts=10 ;;
     esac
@@ -147,7 +147,7 @@ while IFS= read -r session || [ -n "$session" ]; do
             [ -n "$pane" ] || continue
 
             target="$session:$win.$pane"
-            restore_readiness_pane "$target" save 2>/dev/null || continue
+            restore_readiness_pane "$target" 2>/dev/null || continue
 
             snapshot_write_row \
                 "$RESTORE_READY_TARGET" \
